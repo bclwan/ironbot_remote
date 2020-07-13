@@ -22,13 +22,14 @@ import cv2 as cv
 
 class scan_proc():
 
-  def __init__(self, scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False):
+  def __init__(self, scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, bot_circumference=(0.5,0.5)):
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
     self.pub_scan_map = pub_scan_map
 
     self.auto_gen_map = auto_gen_map
     self.invert_scan = invert
+    self.bot_circumference = bot_circumference
 
     self.gScanInit = False
     self.gScanData = LaserScan()
@@ -63,12 +64,11 @@ class scan_proc():
   def scan_callback(self, msg):
     self.gScanData = msg
     if not self.gScanInit:
-      
-      print "Scan Angle Max: %f (rad)" % self.gScanData.angle_max
-      print "Scan Angle Inc: %f (rad)" % self.gScanData.angle_increment
-      print "Scan Range Min: %f (m)" % self.gScanData.range_min
-      print "Scan Range Max: %f (m)" % self.gScanData.range_max
-      print "Scan Data Length: %d" % len(self.gScanData.ranges)
+      print("Scan Angle Max: %f (rad)" % self.gScanData.angle_max)
+      print("Scan Angle Inc: %f (rad)" % self.gScanData.angle_increment)
+      print("Scan Range Min: %f (m)" % self.gScanData.range_min)
+      print("Scan Range Max: %f (m)" % self.gScanData.range_max)
+      print("Scan Data Length: %d" % len(self.gScanData.ranges))
       
       self.base_dim = self.gScanData.range_max*2 + 1
       self.shift = int(self.base_dim*self.scaleup)>>1
@@ -93,7 +93,6 @@ class scan_proc():
       if self.pub_scan_map:
         self.scan_publish()
 
-      
 
 
   def scan_publish(self):
@@ -125,11 +124,11 @@ class scan_proc():
     size = samples.shape[0]
     
     if size<=0:
-      print "No scan data"
+      print("No scan data")
       return True
     
  
-    print "Test for direction: %f travel %f" % (direction, safe_dist)
+    print("Test for direction: %f travel %f" % (direction, safe_dist))
 
     """
     if direction<=(np.pi/4) or direction>(7*np.pi/4):
@@ -147,7 +146,7 @@ class scan_proc():
     closest = np.min(samples)
     avg = np.mean(samples)
     collision = closest<safe_dist and avg<safe_dist
-    print "Closest Dist.: %f (avg %f)" % (closest, avg)
+    print("Closest Dist.: %f (avg %f)" % (closest, avg))
 
     return collision
 
@@ -157,6 +156,16 @@ class scan_proc():
       pass
     while self.gViewLock:
       pass
+    
+    #Image Axis
+    # o---------->x
+    # |
+    # |
+    # |
+    # |
+    # v
+    # y
+
     # Get raw range values
     ranges = self.gRanges.copy()
     #print ranges
@@ -164,7 +173,7 @@ class scan_proc():
     half = L>>1
     quad = L>>2
     octa = L>>3
-    center = np.array([self.shift, self.shift])
+    center = np.array([self.shift, self.shift], dtype=int)
 
     """
     self.gFrontView = np.insert(ranges[0:octa], octa, center, axis=0)
@@ -179,25 +188,108 @@ class scan_proc():
     pt_y = self.gYcoord * scaleupRanges + self.shift
     points = np.column_stack([pt_x, pt_y]).astype(np.int32)
     #print points
-
+    """
     front = np.insert(points[0:octa], octa, center, axis=0)
     front = np.concatenate([front, points[7*octa:L]])
     left = np.insert(points[octa:octa+quad], 0, center, axis=0)
     back = np.insert(points[half-octa:half+octa], 0, center, axis=0)
     right = np.insert(points[half+octa:7*octa], 0, center, axis=0)
+    """
 
     self.scan_map = np.zeros([self.map_dim,self.map_dim,3], dtype=np.uint8)
-    #cv.drawContours(scan_map, [points],0,(255,255,255),2)
-    cv.drawContours(self.scan_map, [front],-1,(255,0,0),2)
-    cv.drawContours(self.scan_map, [left],-1,(0,255,0),2)
-    cv.drawContours(self.scan_map, [right],-1,(0,0,255),2)
-    cv.drawContours(self.scan_map, [back],-1,(255,255,255),2)
+    cv.drawContours(self.scan_map, [points],0,(127,127,127),-1)
+    cv.drawContours(self.scan_map, [points],0,(255,0,0),1)
 
+    eCenter = (center[0], center[1])
+    axes = (10,10)
+    angle = 0.0
+    startAng = 0.0
+    endAng = 360.0
+    eColor = (0,0,255)
+    thickness = -1
+    cv.ellipse(self.scan_map, eCenter, axes, angle, startAng, endAng, eColor, thickness)
+
+    arrow_head = np.array((center[0]+7, center[1]))
+    arrow_left = np.array((center[0]-5, center[1]-6))
+    arrow_right = np.array((center[0]-5, center[1]+6))
+    center_arrow = np.array([arrow_head, arrow_left, arrow_right])
+    cv.drawContours(self.scan_map, [center_arrow],0,(0,255,0),-1)
+    self.scan_map[center[0],center[1],0] = 255
+    self.scan_map[center[0],center[1],1] = 0 
+    self.scan_map[center[0],center[1],2] = 0
+
+    """
+    cv.drawContours(self.scan_map, [front],-1,(255,0,0),1)
+    cv.drawContours(self.scan_map, [left],-1,(0,255,0),1)
+    cv.drawContours(self.scan_map, [right],-1,(0,0,255),1)
+    cv.drawContours(self.scan_map, [back],-1,(255,255,255),1)
+    """
     #plt.imshow(np.fliplr(np.rot90(scan_map, 1)))
 
     rate = rospy.Rate(1e6)
     rate.sleep()
 
+
+
+  def AStar_hFunc(self, pos, goal):
+    
+    return 0
+
+    
+  def get_free_loc(self, pos):
+    free_space = []
+    candidates = [(pos[0]+1, pos[1]),
+                  (pos[0]-1, pos[1]),
+                  (pos[0], pos[1]+1),
+                  (pos[0], pos[1]-1),
+                  (pos[0]+1, pos[1]+1),
+                  (pos[0]+1, pos[1]-1),
+                  (pos[0]-1, pos[1]+1),
+                  (pos[0]-1, pos[1]-1)
+                  ]
+    for c in candidates:
+      if self.scan_map[c[0]][c[1]]==(127,127,127):
+        free_space.append(c)
+        
+    return free_space
+
+
+  def local_path_AStar_search(self, dest, DBG=False):
+    from priorityQueue import PriorityQueue
+
+    startPos = (self.shift, self.shift)
+    begin = list(startPos)
+    if DBG:
+      print("Begin", begin)
+    
+    frontier = PriorityQueue()
+    frontier.push(begin, 0)
+    explored = set()
+    
+    #Validate destination points
+    #
+    #
+
+    for goal in dest:
+
+      while not frontier.isEmpty():
+        statePath = frontier.pop()
+        
+        if (statePath[-1]==goal):
+          if DBG: print("Reached Goal State")
+          return statePath
+
+        if statePath[-1] not in explored:
+          explored.add(statePath[-1])
+          currNode = statePath[-1]
+          
+          nextNode = self.get_free_loc(currNode)
+          if not len(nextNode):
+            for n in nextNode:
+              stateVal = self.AStar_hFunc(n, goal)
+              if stateVal>0:
+                newStatePath = statePath.insert(-1, n)
+                frontier.push(newStatePath, stateVal)
 
 
 scan_diag = None
@@ -220,7 +312,7 @@ def scan_disp_server():
   rospy.init_node('scan_capture')
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
-  scan_processor = scan_proc(scaleup=40.0, pub_scan_map=True, auto_gen_map=True, invert=True)
+  scan_processor = scan_proc(scaleup=100.0, pub_scan_map=True, auto_gen_map=True, invert=False)
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)
 
   rate = rospy.Rate(100)
@@ -252,7 +344,14 @@ def scan_disp_client():
 
 
 if __name__=="__main__":
-  scan_disp_client()
+  import sys
+  option = sys.argv[1]
+  if option=="client":
+    scan_disp_client()
+  elif option=="server":
+    scan_disp_server()
+  else:
+    print("Error: Option unavailable")
 
 
 
