@@ -17,12 +17,15 @@ from copy import copy
 
 import cv2 as cv
 
+from utility import *
+
 #from robot_tf_func import *
 
 
 class scan_proc():
 
-  def __init__(self, scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, bot_circumference=(0.5,0.5)):
+  def __init__(self, scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, 
+              bot_circumference=(0.5,0.5), circum_check=False):
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
     self.pub_scan_map = pub_scan_map
@@ -30,6 +33,7 @@ class scan_proc():
     self.auto_gen_map = auto_gen_map
     self.invert_scan = invert
     self.bot_circumference = bot_circumference
+    self.circum_check = circum_check
 
     self.gScanInit = False
     self.gScanData = LaserScan()
@@ -49,9 +53,16 @@ class scan_proc():
     self.full_points = None
 
     self.scaleup = scaleup
-    
     self.base_dim = 0.0
+    self.map_dim = 0
     self.shift = 0
+    self.scan_map = None
+    self.free_space = None
+    self.next_path = []
+
+    self.ego_space = None
+    self.ego_mass = 0
+    self.ego_loc = (0,0)
 
     self.coll_f = 0.0
     self.coll_b = 0.0
@@ -59,6 +70,9 @@ class scan_proc():
     self.coll_r = 0.0
 
     self.sample_size = 5
+
+    self.create_ego_occupancy(bot_circumference[0], bot_circumference[1])
+
 
 
   def scan_callback(self, msg):
@@ -73,6 +87,7 @@ class scan_proc():
       self.base_dim = self.gScanData.range_max*2 + 1
       self.shift = int(self.base_dim*self.scaleup)>>1
       self.map_dim = int(self.base_dim*self.scaleup)
+      self.ego_loc = (self.shift, self.shift)
 
       angleIndex = np.array([i for i in range(0,len(self.gScanData.ranges))]) * self.gScanData.angle_increment
       self.gXcoord = np.cos(angleIndex)
@@ -108,6 +123,8 @@ class scan_proc():
       pass
     return self.gRanges.copy()
 
+
+
   def next_state_collision_est(self, safe_dist, direction):
     collision = True
 
@@ -129,19 +146,6 @@ class scan_proc():
     
  
     print("Test for direction: %f travel %f" % (direction, safe_dist))
-
-    """
-    if direction<=(np.pi/4) or direction>(7*np.pi/4):
-      view = self.gFrontView
-    elif direction>(np.pi/4) or direction<=(3*np.pi/4):
-      view = self.gLeftView
-    elif direction>(3*np.pi/4) or direction<=(5*np.pi/4):
-      view = self.gRearView
-    elif direction>(5*np.pi/4) or direction<=(7*np.pi/4):
-      view = self.gRightView
-    else:
-      view = self.gFrontView
-    """
     
     closest = np.min(samples)
     avg = np.mean(samples)
@@ -149,6 +153,9 @@ class scan_proc():
     print("Closest Dist.: %f (avg %f)" % (closest, avg))
 
     return collision
+
+ 
+
 
 
   def gen_local_map(self):
@@ -197,11 +204,21 @@ class scan_proc():
     """
 
     self.scan_map = np.zeros([self.map_dim,self.map_dim,3], dtype=np.uint8)
-    cv.drawContours(self.scan_map, [points],0,(127,127,127),-1)
+    cv.drawContours(self.scan_map, [points],0,(191,191,191),-1)
     cv.drawContours(self.scan_map, [points],0,(255,0,0),1)
+    self.free_space = self.scan_map[:,:,1].copy()
+    non_occupied = self.free_space>0
+    occupied = self.free_space==0
+    self.free_space[non_occupied] = 0
+    self.free_space[occupied] = 1
+    """
+    plt.imshow(self.free_space)
+    plt.show()
+    a = raw_input()
+    """
 
     eCenter = (center[0], center[1])
-    axes = (10,10)
+    axes = (int(self.bot_circumference[0]*self.scaleup), int(self.bot_circumference[1]*self.scaleup))
     angle = 0.0
     startAng = 0.0
     endAng = 360.0
@@ -226,17 +243,107 @@ class scan_proc():
     """
     #plt.imshow(np.fliplr(np.rot90(scan_map, 1)))
 
+    if self.circum_check:
+      self.check_space_occupancy(eCenter)
+
     rate = rospy.Rate(1e6)
     rate.sleep()
 
 
+  def create_ego_occupancy(self, a, b): #unit in meter
+    dim = int(max(a,b)*self.scaleup)*2
+    self.ego_space = np.zeros((dim, dim), dtype=np.uint8)
+    center = (dim>>1, dim>>1)
+    axes = (int(a*self.scaleup),int(b*self.scaleup))
+    angle = 0.0
+    startAng = 0.0
+    endAng = 360.0
+    eColor = 1
+    thickness = -1
+    cv.ellipse(self.ego_space, center, axes, angle, startAng, endAng, eColor, thickness)
+    self.ego_mass = np.sum(self.ego_space)
 
-  def AStar_hFunc(self, pos, goal):
+
+
+  def sample_free_pos(self, N=1):
+    ego_lim_x0 = self.ego_loc[0]-self.bot_circumference[0]
+    ego_lim_y0 = self.ego_loc[1]-self.bot_circumference[1]
+    ego_lim_x1 = self.ego_loc[0]+self.bot_circumference[0]
+    ego_lim_y1 = self.ego_loc[1]+self.bot_circumference[1]
+
+    free_pos = []
+    while len(free_pos)<N:
+      x = np.random.randint(0+self.bot_circumference[0], self.map_dim-self.bot_circumference[0])
+      y = np.random.randint(0+self.bot_circumference[1], self.map_dim-self.bot_circumference[1])
+      if not ((x>=ego_lim_x0) and (x<=ego_lim_x1)):
+        if not ((y>=ego_lim_y0) and (y<=ego_lim_y1)):
+          free_pos.append((x,y))
+
+    return free_pos
+
+
+
+
+  def check_space_occupancy(self, pos, dbg=False):
+    ego_shape = self.ego_space.shape[0]
+    map_range_max = self.scan_map.shape[0]
+    sub_space = np.zeros((ego_shape,ego_shape))
+    map_range_x0 = pos[0]-(ego_shape>>1)
+    map_range_x1 = pos[0]+(ego_shape>>1)
+    map_range_y0 = pos[1]-(ego_shape>>1)
+    map_range_y1 = pos[1]+(ego_shape>>1)
     
-    return 0
+    if map_range_x0<0 or map_range_y0<0:
+      if dbg: print("Into the Unknown")
+      return -1
+      
+    if map_range_x1>=map_range_max or map_range_y1>=map_range_max:
+      if dbg: print("Into the Unknown")
+      return -1
+
+    sub_space = self.free_space[map_range_x0:map_range_x1, map_range_y0:map_range_y1].copy()
+
+    overlap_arr = np.multiply(sub_space, self.ego_space)
+    overlap_sum = np.sum(overlap_arr)
+    
+    if overlap_sum>0:
+      if dbg: print("Obstacles Around: %d" % overlap_sum)
+
+    return overlap_sum
+      
+
+
+
+  def AStar_hFunc(self, org, pos, goal):
+    score = 0.0
+
+    dir_limit = np.pi*60.0/180.0
+    main_dir = world_get_dir(org, goal)
+    move_dir = world_get_dir(org, pos)
+    diff = world_dir_diff(main_dir, move_dir)
+    
+    #Deviation Check
+    if diff>dir_limit:
+      score = -1.0
+      return score
+
+    #Collision Check
+    overlap = self.check_space_occupancy(pos)
+    if overlap>0:
+      score = -1.0
+      return score
+
+    dist = manhattan_dist(pos, goal)
+    if dist==0:
+      score = 1.0
+    else:
+      score = 1.0/dist
+
+    return score
 
     
-  def get_free_loc(self, pos):
+
+  def get_free_loc_around(self, pos):
     free_space = []
     candidates = [(pos[0]+1, pos[1]),
                   (pos[0]-1, pos[1]),
@@ -248,49 +355,55 @@ class scan_proc():
                   (pos[0]-1, pos[1]-1)
                   ]
     for c in candidates:
-      if self.scan_map[c[0]][c[1]]==(127,127,127):
+      if self.free_space[c[0]][c[1]]==0:
         free_space.append(c)
         
     return free_space
 
 
-  def local_path_AStar_search(self, dest, DBG=False):
-    from priorityQueue import PriorityQueue
 
-    startPos = (self.shift, self.shift)
-    begin = list(startPos)
-    if DBG:
-      print("Begin", begin)
+  def local_path_AStar_search(self, dest, dbg=False):
+    startPos = self.ego_loc
+    begin = []
+    begin.append(startPos)
+    if dbg:
+      print("Begin: ", begin)
+      print("End: ", dest)
     
     frontier = PriorityQueue()
     frontier.push(begin, 0)
     explored = set()
-    
-    #Validate destination points
-    #
-    #
 
-    for goal in dest:
+    while not frontier.isEmpty():
+      statePath = frontier.pop()
+      if dbg: print("Eval Path: ", statePath)
+      currNode = statePath[-1]
+      
+      if (currNode==dest):
+        if dbg: print("Reached Goal State")
+        self.next_path = statePath
+        return statePath
 
-      while not frontier.isEmpty():
-        statePath = frontier.pop()
+      if currNode not in explored:
+        explored.add(currNode)
+        if dbg: print("Eval Node: ", currNode)
         
-        if (statePath[-1]==goal):
-          if DBG: print("Reached Goal State")
-          return statePath
+        nextNode = self.get_free_loc_around(currNode)
+        if dbg: print("Next Node: ", nextNode)
 
-        if statePath[-1] not in explored:
-          explored.add(statePath[-1])
-          currNode = statePath[-1]
-          
-          nextNode = self.get_free_loc(currNode)
-          if not len(nextNode):
-            for n in nextNode:
-              stateVal = self.AStar_hFunc(n, goal)
-              if stateVal>0:
-                newStatePath = statePath.insert(-1, n)
-                frontier.push(newStatePath, stateVal)
+        if len(nextNode)>0:
+          for n in nextNode:
+            stateVal = self.AStar_hFunc(currNode, n, dest)
+            if dbg: print(n, stateVal)
+            if stateVal>0:
+              newStatePath = statePath[:]
+              newStatePath.insert(len(newStatePath), n)
+              frontier.push(newStatePath, stateVal)
+              if dbg: print("Add Path: ", newStatePath)
 
+
+
+############################################################################
 
 scan_diag = None
 
@@ -305,6 +418,7 @@ def display_scan_diagram(i):
   if scan_diag is not None:
     plt.cla()
     plt.imshow(scan_diag)
+    
 
 
 
@@ -312,7 +426,8 @@ def scan_disp_server():
   rospy.init_node('scan_capture')
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
-  scan_processor = scan_proc(scaleup=100.0, pub_scan_map=True, auto_gen_map=True, invert=False)
+  scan_processor = scan_proc(scaleup=100.0, pub_scan_map=True, auto_gen_map=True, invert=False, 
+                            bot_circumference=(0.2, 0.2), circum_check=True)
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)
 
   rate = rospy.Rate(100)
@@ -321,11 +436,11 @@ def scan_disp_server():
     rate.sleep()
 
   while not rospy.is_shutdown():
-
+    
     scan_plot = animation.FuncAnimation(plt.gcf(), display_scan_diagram, 1000)
     plt.tight_layout()
     plt.show()
-
+    
     rate.sleep()
 
 

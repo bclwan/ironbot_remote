@@ -148,7 +148,7 @@ def main_console():
   tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
   
 
-  print "ROS Node setup done"
+  print("ROS Node setup done")
 
   # Console setup
   ib_panel = control_panel()

@@ -10,13 +10,15 @@ from geometry_msgs.msg import Pose, Point, Quaternion, Twist, Vector3, Transform
 from tf.transformations import euler_from_quaternion
 from tf2_msgs.msg import TFMessage
 
+import sys
+
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from robot_tf_func import *
 from motion_ctrl import motion_control, path_planner
 from scan_capture import scan_proc
-
+from utility import *
 
 robot_state = state_var[0]
 
@@ -46,6 +48,12 @@ def get_next_pos(direction, distance):
 
 
 def main():
+  #Pre-set
+  SIM = False
+  if len(sys.argv)>1:
+    if sys.argv[1]=="sim":
+      SIM = True
+
   # ROS setup
   rospy.init_node('ironbot', anonymous=True)
 
@@ -59,7 +67,15 @@ def main():
   rate = rospy.Rate(100)
 
   # Tools setup
-  scan_processor = scan_proc(scaleup=40.0, pub_scan_map=True, auto_gen_map=True, invert=True)
+  scanMapScale = 40.0
+  scanInvert = True
+  if SIM:
+    scanInvert = False
+
+  scan_processor = scan_proc(scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, invert=scanInvert, bot_circumference=(0.2, 0.2))
+  while not scan_processor.gScanInit:
+    rate.sleep()
+
 
   robot_path_planner = path_planner(cmd_pub=cmd_vel_pub, 
                                     get_ort=tf_get_ort_e, 
@@ -76,14 +92,40 @@ def main():
                                           DBG=True)
 
   print("===Ironbot Core Ready===")
+  print("Robot Local Pos: ", scan_processor.ego_loc)
+  world_pos = tf_get_pos()
+  trans = (world_pos[0]-scan_processor.ego_loc[0]/scanMapScale, world_pos[1]-scan_processor.ego_loc[1]/scanMapScale)
+  pt = np.zeros((1,2))
+  pt[0] = scan_processor.ego_loc
+  print("Robot World Pos: ", world_2d_tf(trans, -tf_get_ort_e()[2], pt/scanMapScale))
 
   while not rospy.is_shutdown():
     global robot_state
+
+    robot_state = "NAV"
+
     state_pub.publish(robot_state)
 
     if robot_state=="IDLE":
       rate.sleep()
     
+    elif robot_state=="NAV":
+      nav_rate = rospy.Rate(0.1)
+
+      path = None
+      while path==None:
+        rand_goal = scan_processor.sample_free_pos(1)
+        path = scan_processor.local_path_AStar_search(rand_goal[0], dbg=False)
+
+      print("GO Next: ", rand_goal)  
+      print("Path: ", path)
+      world_pos = tf_get_pos()
+      trans = (world_pos[0]-scan_processor.ego_loc[0]/scanMapScale, world_pos[1]-scan_processor.ego_loc[1]/scanMapScale)
+      print("Path(World): ", world_2d_tf(trans, -tf_get_ort_e()[2], np.array(path)/scanMapScale))
+
+      nav_rate.sleep()
+
+
     elif robot_state=="WANDER":
       min_dist = 0.3
       max_dist = 0.5
