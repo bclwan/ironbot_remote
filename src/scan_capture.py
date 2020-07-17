@@ -7,6 +7,7 @@ from sensor_msgs.msg import LaserScan, Image
 #from tf2_msgs.msg import TFMessage
 from cv_bridge import CvBridge
 
+import time
 import numpy as np
 
 import matplotlib.pyplot as plt
@@ -17,6 +18,7 @@ from copy import copy
 
 import cv2 as cv
 
+from robot_tf_func import *
 from utility import *
 
 #from robot_tf_func import *
@@ -24,16 +26,21 @@ from utility import *
 
 class scan_proc():
 
-  def __init__(self, scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, 
-              bot_circumference=(0.5,0.5), circum_check=False):
+  def __init__(self, get_ort, get_pos, 
+              scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, 
+              bot_circumference=(0.5,0.5), circum_check=False, print_path=False):
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
     self.pub_scan_map = pub_scan_map
+
+    self.get_ort = get_ort
+    self.get_pos = get_pos
 
     self.auto_gen_map = auto_gen_map
     self.invert_scan = invert
     self.bot_circumference = bot_circumference
     self.circum_check = circum_check
+    self.print_path = print_path
 
     self.gScanInit = False
     self.gScanData = LaserScan()
@@ -58,7 +65,9 @@ class scan_proc():
     self.shift = 0
     self.scan_map = None
     self.free_space = None
+
     self.next_path = []
+    self.next_path_pose = {"pos":self.get_pos(), "ort":self.get_ort()[2], "time":time.time()}
 
     self.ego_space = None
     self.ego_mass = 0
@@ -111,8 +120,26 @@ class scan_proc():
 
 
   def scan_publish(self):
+    pub_map = self.scan_map.copy()
+    if self.print_path and len(self.next_path)>0:
+      try:
+        path = self.next_path[:]
+        curr_pos = self.get_pos()
+        curr_ort = self.get_ort()[2]
+        rot =  self.next_path_pose["ort"] - curr_ort
+        #print(rot)
+        trans = np.array([self.next_path_pose["pos"][1]-curr_pos[1], self.next_path_pose["pos"][0]-curr_pos[0]])*self.scaleup
+        path_org = np.array(path) - np.array(self.ego_loc)
+        path_on_map = world_2d_tf((0,0), -rot, path_org).astype(np.int)
+        path_on_map = path_on_map + np.array(self.ego_loc)
+        path_on_map = world_2d_tf(trans, 0, path_on_map).astype(np.int)
+        #print("Path on Map: ", path_on_map)
+        pub_map[path_on_map[:,0],path_on_map[:,1],:] = np.array([255,0,0])
+      except:
+        pass
+      
     bridge = CvBridge()
-    imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90(self.scan_map, 1)), encoding="bgr8")
+    imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90(pub_map, 1)), encoding="bgr8")
     self.scan_pub.publish(imgMsg)
 
 
@@ -244,7 +271,7 @@ class scan_proc():
     #plt.imshow(np.fliplr(np.rot90(scan_map, 1)))
 
     if self.circum_check:
-      self.check_space_occupancy(eCenter)
+      self.check_space_occupancy(eCenter, self.free_space)
 
     rate = rospy.Rate(1e6)
     rate.sleep()
@@ -284,9 +311,9 @@ class scan_proc():
 
 
 
-  def check_space_occupancy(self, pos, dbg=False):
+  def check_space_occupancy(self, pos, occ_map, dbg=False):
     ego_shape = self.ego_space.shape[0]
-    map_range_max = self.scan_map.shape[0]
+    map_range_max = occ_map.shape[0]
     sub_space = np.zeros((ego_shape,ego_shape))
     map_range_x0 = pos[0]-(ego_shape>>1)
     map_range_x1 = pos[0]+(ego_shape>>1)
@@ -301,7 +328,7 @@ class scan_proc():
       if dbg: print("Into the Unknown")
       return -1
 
-    sub_space = self.free_space[map_range_x0:map_range_x1, map_range_y0:map_range_y1].copy()
+    sub_space = occ_map[map_range_x0:map_range_x1, map_range_y0:map_range_y1]
 
     overlap_arr = np.multiply(sub_space, self.ego_space)
     overlap_sum = np.sum(overlap_arr)
@@ -310,11 +337,10 @@ class scan_proc():
       if dbg: print("Obstacles Around: %d" % overlap_sum)
 
     return overlap_sum
-      
 
 
 
-  def AStar_hFunc(self, org, pos, goal):
+  def AStar_hFunc(self, org, pos, goal, occ_map):
     score = 0.0
 
     dir_limit = np.pi*60.0/180.0
@@ -328,7 +354,7 @@ class scan_proc():
       return score
 
     #Collision Check
-    overlap = self.check_space_occupancy(pos)
+    overlap = self.check_space_occupancy(pos, occ_map)
     if overlap>0:
       score = -1.0
       return score
@@ -343,7 +369,7 @@ class scan_proc():
 
     
 
-  def get_free_loc_around(self, pos):
+  def get_free_loc_around(self, pos, occ_map):
     free_space = []
     candidates = [(pos[0]+1, pos[1]),
                   (pos[0]-1, pos[1]),
@@ -355,7 +381,7 @@ class scan_proc():
                   (pos[0]-1, pos[1]-1)
                   ]
     for c in candidates:
-      if self.free_space[c[0]][c[1]]==0:
+      if occ_map[c[0]][c[1]]==0:
         free_space.append(c)
         
     return free_space
@@ -363,7 +389,12 @@ class scan_proc():
 
 
   def local_path_AStar_search(self, dest, dbg=False):
+    if self.free_space is None:#no map data
+      return None
     startPos = self.ego_loc
+    occ_map = self.free_space.copy()
+    self.next_path_pose = {"pos":self.get_pos(), "ort":self.get_ort()[2], "time":time.time()}
+    
     begin = []
     begin.append(startPos)
     if dbg:
@@ -388,12 +419,12 @@ class scan_proc():
         explored.add(currNode)
         if dbg: print("Eval Node: ", currNode)
         
-        nextNode = self.get_free_loc_around(currNode)
+        nextNode = self.get_free_loc_around(currNode, occ_map)
         if dbg: print("Next Node: ", nextNode)
 
         if len(nextNode)>0:
           for n in nextNode:
-            stateVal = self.AStar_hFunc(currNode, n, dest)
+            stateVal = self.AStar_hFunc(currNode, n, dest, occ_map)
             if dbg: print(n, stateVal)
             if stateVal>0:
               newStatePath = statePath[:]
@@ -424,10 +455,13 @@ def display_scan_diagram(i):
 
 def scan_disp_server():
   rospy.init_node('scan_capture')
+  tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
-  scan_processor = scan_proc(scaleup=100.0, pub_scan_map=True, auto_gen_map=True, invert=False, 
+  scan_processor = scan_proc(scaleup=100.0, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
+                            pub_scan_map=True, auto_gen_map=True, invert=False, 
                             bot_circumference=(0.2, 0.2), circum_check=True)
+
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)
 
   rate = rospy.Rate(100)

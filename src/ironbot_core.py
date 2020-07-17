@@ -72,7 +72,9 @@ def main():
   if SIM:
     scanInvert = False
 
-  scan_processor = scan_proc(scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, invert=scanInvert, bot_circumference=(0.2, 0.2))
+  scan_processor = scan_proc(get_ort=tf_get_ort_e, get_pos=tf_get_pos, 
+                            scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, 
+                            invert=scanInvert, bot_circumference=(0.2, 0.2), print_path=True)
   while not scan_processor.gScanInit:
     rate.sleep()
 
@@ -110,7 +112,7 @@ def main():
       rate.sleep()
     
     elif robot_state=="NAV":
-      nav_rate = rospy.Rate(0.1)
+      nav_rate = rospy.Rate(1)
 
       path = None
       while path==None:
@@ -118,11 +120,13 @@ def main():
         path = scan_processor.local_path_AStar_search(rand_goal[0], dbg=False)
 
       print("GO Next: ", rand_goal)  
-      print("Path: ", path)
+      #print("Path: ", path)
       world_pos = tf_get_pos()
       trans = (world_pos[0]-scan_processor.ego_loc[0]/scanMapScale, world_pos[1]-scan_processor.ego_loc[1]/scanMapScale)
-      print("Path(World): ", world_2d_tf(trans, -tf_get_ort_e()[2], np.array(path)/scanMapScale))
+      path_in_world = world_2d_tf(trans, -tf_get_ort_e()[2], np.array(path)/scanMapScale)
+      #print("Path(World): ", path_in_world)
 
+      a = raw_input()
       nav_rate.sleep()
 
 
