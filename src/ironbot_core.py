@@ -73,25 +73,33 @@ def main():
     scanInvert = False
 
   scan_processor = scan_proc(get_ort=tf_get_ort_e, get_pos=tf_get_pos, 
-                            scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, 
-                            invert=scanInvert, bot_circumference=(0.2, 0.2), print_path=True)
+                            scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, skip_inf=False,
+                            invert=scanInvert, bot_circumference=(0.3, 0.2), print_path=True)
+  
   while not scan_processor.gScanInit:
+    print("Waiting Scan Init..")
     rate.sleep()
 
+  standalone_motion_ctrl = motion_control(cmd_pub=cmd_vel_pub, 
+                                          get_ort=tf_get_ort_e, 
+                                          get_pos=tf_get_pos,
+                                          get_range=scan_processor.get_range_data,
+                                          occ_chk=scan_processor.check_space_occupancy,
+                                          target_thres=0.2, track_bound=0.5,
+                                          view_angle=150, safe_dist=0.25,
+                                          DBG=False)
+
+  print("Motion Controller Initialized")
 
   robot_path_planner = path_planner(cmd_pub=cmd_vel_pub, 
                                     get_ort=tf_get_ort_e, 
                                     get_pos=tf_get_pos, 
                                     get_range=scan_processor.get_range_data, 
-                                    step_size=0.15, Ps=2.0, Pa=4.0)
+                                    motion_ctrl=standalone_motion_ctrl,
+                                    chk_collision_dir=scan_processor.check_overlap_dir,
+                                    step_size=0.15, Ps=0.2, Pa=4.0, DBG=True)
   
-  standalone_motion_ctrl = motion_control(cmd_pub=cmd_vel_pub, 
-                                          get_ort=tf_get_ort_e, 
-                                          get_pos=tf_get_pos,
-                                          get_range=scan_processor.get_range_data,
-                                          target_thres=0.2, track_bound=0.5,
-                                          view_angle=150, safe_dist=0.25,
-                                          DBG=True)
+  print("Path Planner Initialized")
 
   print("===Ironbot Core Ready===")
   print("Robot Local Pos: ", scan_processor.ego_loc)
@@ -104,7 +112,7 @@ def main():
   while not rospy.is_shutdown():
     global robot_state
 
-    robot_state = "NAV"
+    #robot_state = "NAV"
 
     state_pub.publish(robot_state)
 
@@ -112,11 +120,15 @@ def main():
       rate.sleep()
     
     elif robot_state=="NAV":
+      print("==NAVIGATION MODE==")
+      a = raw_input()
+
+      print("Searching Path...")
       nav_rate = rospy.Rate(1)
 
       path = None
       while path==None:
-        rand_goal = scan_processor.sample_free_pos(1, show=False)
+        rand_goal = scan_processor.sample_free_pos(N=1, R=1.0, show=False)
         path = scan_processor.local_path_AStar_search(rand_goal[0], dbg=False)
 
       print("GO Next: ", rand_goal)  
@@ -124,9 +136,13 @@ def main():
       world_pos = tf_get_pos()
       trans = (world_pos[0]-scan_processor.ego_loc[0]/scanMapScale, world_pos[1]-scan_processor.ego_loc[1]/scanMapScale)
       path_in_world = world_2d_tf(trans, -tf_get_ort_e()[2], np.array(path)/scanMapScale)
-      #print("Path(World): ", path_in_world)
+      print("Path(World): ", path_in_world)
 
-      a = raw_input()
+      #a = raw_input()
+
+      robot_path_planner.set_mission(path_in_world)
+      robot_path_planner.mission_expl(10)
+
       nav_rate.sleep()
 
 

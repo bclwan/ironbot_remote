@@ -52,17 +52,20 @@ class control_panel():
     buttonCommand_1 = tk.Button(self.panel, text="WANDER", command=lambda: self.set_robot_state(1))
     buttonCommand_1.pack()
 
-    buttonCommand_2 = tk.Button(self.panel, text="TRAVEL", command=lambda: self.set_robot_state(2))
+    buttonCommand_2 = tk.Button(self.panel, text="NAV", command=lambda: self.set_robot_state(2))
     buttonCommand_2.pack()
 
-    buttonCommand_3 = tk.Button(self.panel, text="RESET ODOM", command=lambda: self.reset_odom())
+    buttonCommand_3 = tk.Button(self.panel, text="TRAVEL", command=lambda: self.set_robot_state(3))
     buttonCommand_3.pack()
 
-    buttonCommand_4 = tk.Button(self.panel, text="EMERGENCY STOP", command=lambda: self.stop_motor())
+    buttonCommand_4 = tk.Button(self.panel, text="RESET ODOM", command=lambda: self.reset_odom())
     buttonCommand_4.pack()
 
-    buttonCommand_5 = tk.Button(self.panel, text="REBOOT MOTOR", command=lambda: self.reboot_motor())
+    buttonCommand_5 = tk.Button(self.panel, text="EMERGENCY STOP", command=lambda: self.stop_motor())
     buttonCommand_5.pack()
+
+    buttonCommand_6 = tk.Button(self.panel, text="REBOOT MOTOR", command=lambda: self.reboot_motor())
+    buttonCommand_6.pack()
 
     buttonClose = tk.Button(self.panel, text="!==Close==!", command=self.panel.destroy)
     buttonClose.pack()

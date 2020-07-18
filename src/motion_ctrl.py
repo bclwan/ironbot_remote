@@ -49,7 +49,7 @@ def tf_get_pos():
 
 class motion_control():
 
-  def __init__(self, cmd_pub, get_ort, get_pos, get_range, 
+  def __init__(self, cmd_pub, get_ort, get_pos, get_range, occ_chk,
               Ps=2.5, Pa=4.0, 
               target_thres=0.2, track_bound=0.5,
               safe_dist=0.2, safe_avg=1.5, view_angle=180, 
@@ -58,6 +58,7 @@ class motion_control():
     self.get_ort = get_ort
     self.get_pos = get_pos
     self.get_range = get_range
+    self.occ_chk = occ_chk
     self.Ps = Ps
     self.Pa = Pa
     self.ang_eps = 0.1
@@ -153,15 +154,17 @@ class motion_control():
     self.cmd.publish(twist)
 
   
-  def slight_move(self, vel=0.5, timeout=3.0):
+  def slight_move(self, vel=0.5, ang=0.0, timeout=2.0):
     import time
     start_time = time.time()
     timeup = False
     
     linear_vel = vel
+    angular_steer = ang
     rate = rospy.Rate(1000)
     twist = Twist()
     twist.linear.x = linear_vel
+    twist.angular.z = angular_steer
 
     if vel<0:
       print "Trying slight backward move"
@@ -195,8 +198,7 @@ class motion_control():
     min_dist = np.min(samples)
     avg_dist = np.mean(samples)
     collision = (min_dist<safe_dist) or (avg_dist<self.safe_avg)
-    
-    
+
     if collision:
       print ""
       print "===================="
@@ -205,7 +207,6 @@ class motion_control():
       print("Front Scan: %f, %f") % (min_dist, avg_dist)
       print""
       
-
       if EmergenceStop:
         import time
         self.clear_motion()
@@ -237,7 +238,7 @@ class motion_control():
     waypoints[0][1] = init_trans[1]
     waypoints[1][0] = target_trans[0]
     waypoints[1][1] = target_trans[1]
-    print waypoints
+    #print waypoints
     
     self.ack_drv.update_waypoints(waypoints)
     
@@ -270,7 +271,8 @@ class motion_control():
       self.cmd.publish(twist)      
 
       if chk_obst:
-        obstacle = self.check_obstacle()
+        #obstacle = self.check_obstacle()
+        obstacle = self.occ_chk(pos=None, occ_map=None)
 
       if obstacle:
         break
@@ -415,9 +417,10 @@ class motion_control():
 
 
 class path_planner():
-  def __init__(self, cmd_pub, get_ort, get_pos, get_range, 
-              start=(0,0), goal=(0,0), step_size=0.3, lin_eps=0.05, map_size=(10,10), 
-              max_path_node=10, max_mission_node=10, Ps=2.0, Pa=4.0):
+  def __init__(self, cmd_pub, get_ort, get_pos, get_range, motion_ctrl=None,
+              chk_collision_dir=None,
+              step_size=0.3, lin_eps=0.05, map_size=(10,10), 
+              max_path_node=10, max_mission_node=10, Ps=2.0, Pa=4.0, DBG=False):
     self.cmd = cmd_pub
     self.get_ort = get_ort
     self.get_pos = get_pos
@@ -434,6 +437,14 @@ class path_planner():
 
     self.full_path = []
     self.current_mission = []#list of 2-D nodes
+
+    self.motion_ctrl = None
+    if motion_ctrl is not None:
+      self.motion_ctrl = motion_ctrl
+
+    self.chk_collision_dir=chk_collision_dir
+
+    self.DBG = DBG
 
   def update_map(self):
     #Get local map
@@ -454,20 +465,30 @@ class path_planner():
 
   def mission_exec(self):
     for next_pose in self.current_mission:
-      self.next_point_planner(None, next_pose, self.step_size, self.lin_eps)
+      ret = self.path_follow(None, next_pose, self.step_size, self.lin_eps)
+      if ret==-2:
+        print("Mission Ended with Obstruction")
+        return
 
 
   def mission_expl(self, timeout):
     for next_pose in self.current_mission:
-      self.next_point_planner(None, next_pose, self.step_size, self.lin_eps, timeout=timeout)
+      ret = self.path_follow(None, next_pose, self.step_size, self.lin_eps, timeout=timeout)
+      if ret==-2:
+        print("Mission Ended with Obstruction")
+        return
+      
 
 
-  def next_point_planner(self, init_pose, goal_pose, step_size=0.25, lin_eps=0.2, timeout=None):
+  def path_follow(self, init_pose, goal_pose, step_size=0.25, lin_eps=0.2, timeout=None):
     rate = rospy.Rate(1000)
-    motion = motion_control(self.cmd, self.get_ort, self.get_pos, self.get_range, Ps=self.Ps, Pa=self.Pa, DBG=True)
+    motion = self.motion_ctrl
+    if motion is None:
+      motion = motion_control(self.cmd, self.get_ort, self.get_pos, self.get_range, occ_chk=None, Ps=self.Ps, Pa=self.Pa, DBG=True)
+
     init = None
     if not init_pose:
-      print "No assigned init pose, seeking tf..."
+      if self.DBG: print "No assigned init pose, seeking tf..."
       init = self.get_pos()
     else:
       init = (init_pose[0], init_pose[1])
@@ -476,8 +497,8 @@ class path_planner():
     goal = (goal_pose[0], goal_pose[1])
     curr = init
     
-    print "Initial Pos: (%f , %f)" %(init[0], init[1])
-    print "Goal Pos: (%f , %f)" %(goal[0], goal[1])
+    if self.DBG: print "Initial Pos: (%f , %f)" %(init[0], init[1])
+    if self.DBG: print "Goal Pos: (%f , %f)" %(goal[0], goal[1])
 
     next_pose = Pose()
     
@@ -492,44 +513,99 @@ class path_planner():
 
     move_res = 0
     
-    print "Direction Vector: %f, %f" %(dir_vec[0], dir_vec[1])
+    if self.DBG: print "Direction Vector: %f, %f" %(dir_vec[0], dir_vec[1])
     
     while not motion.check_target_zone(goal=goal, curr=curr, R=0.2):
-      curr_vec = np.array([curr[0], curr[1]])
-      corr_pt = ((np.dot(curr_vec-init_vec, dir_vec)/dir_mag)*dir_vec) + init_vec
-      print "==Corr: %f, %f" %(corr_pt[0], corr_pt[1])
-      forward = corr_pt + dir_unit*step_size
-      exceed = np.sign(goal[0]-forward[0])!=np.sign(dir_unit[0]) and np.sign(goal[1]-forward[1])!=np.sign(dir_unit[1])
-      if exceed:
-        print "==Exceed"
+      if motion.USE_DIFFDRV:
+        curr_vec = np.array([curr[0], curr[1]])
+        corr_pt = ((np.dot(curr_vec-init_vec, dir_vec)/dir_mag)*dir_vec) + init_vec
+        if self.DBG: print "==Corr: %f, %f" %(corr_pt[0], corr_pt[1])
+        forward = corr_pt + dir_unit*step_size
+      
+        exceed = np.sign(goal[0]-forward[0])!=np.sign(dir_unit[0]) and np.sign(goal[1]-forward[1])!=np.sign(dir_unit[1])
+        
+        if exceed:
+          if self.DBG: print "==Exceed"
+          next_pose.position.x = goal[0]
+          next_pose.position.y = goal[1]
+        else:
+          next_pose.position.x = forward[0]
+          next_pose.position.y = forward[1]
+      
+        if self.DBG: print "==Next: %f, %f" %(next_pose.position.x, next_pose.position.y)
+        if exceed:
+          move_res = motion.move(next_pose, lin_eps=lin_eps, lin_err=1.5*step_size, timeout=timeout)
+        else:
+          move_res = motion.move(next_pose, lin_eps=motion.lin_eps, lin_err=1.5*step_size, timeout=timeout)
+          
+        curr = self.get_pos()
+        rate.sleep()
+
+      elif motion.USE_ACKERMANN:
         next_pose.position.x = goal[0]
         next_pose.position.y = goal[1]
-      else:
-        next_pose.position.x = forward[0]
-        next_pose.position.y = forward[1]
-      
-      print "==Next: %f, %f" %(next_pose.position.x, next_pose.position.y)
-      if exceed:
-        move_res = motion.move(next_pose, lin_eps=lin_eps, lin_err=1.5*step_size, timeout=timeout)
-      else:
-        move_res = motion.move(next_pose, lin_eps=motion.lin_eps, lin_err=1.5*step_size, timeout=timeout)
-        
-      curr = self.get_pos()
-      rate.sleep()
+        move_res = motion.move(next_pose, timeout=timeout)  
 
       if move_res<0:
         break
-    
-    if move_res==-1:
-      print "End with Timeout"
-    elif move_res==-2:
-      print "End with Obstruction"
-      #motion.slight_move(vel=-0.1, timeout=1.0)
-    elif move_res==-3:
-      print "End with Off Track"
-    else:
-      print "Path Planner: Goal"
+
+
+    if self.DBG: 
+      if move_res==-1:
+        print "End with Timeout"
+      elif move_res==-2:
+        print "End with Obstruction"
+        #motion.slight_move(vel=-0.1, timeout=1.0)
+      elif move_res==-3:
+        print "End with Off Track"
+      else:
+        print "Path Planner: Goal"
+
+    if move_res==-2:
+      self.escape_obstacles()
+      return -2
+
+    return 0
+
+
   
+  
+  def escape_obstacles(self):
+    coll, obs_direction = self.chk_collision_dir(pos=None, occ_map=None, dbg=True)
+    if not coll:
+      return
+    
+    rate = rospy.Rate(10)
+    while coll:
+      counter_direction = obs_direction - np.sign(obs_direction)*np.pi
+      if obs_direction==0.0:
+        counter_direction = np.pi
+      if self.DBG: print("Try Direction: ", counter_direction)
+      
+      steer = 0.0
+      drive = 0.0
+
+      if counter_direction<3*np.pi/4 and counter_direction>-3*np.pi/4:
+        drive = 0.05
+        steer = self.Ps*counter_direction
+      else:
+        drive = -0.05
+        steer = self.Ps*np.sign(counter_direction)*(abs(counter_direction)-np.pi/2)
+      
+      if self.DBG: print("Try Move: vel=%f  ang=%f" % (drive,steer))
+
+      try:
+        self.motion_ctrl.slight_move(vel=drive, ang=steer, timeout=0.5)
+        self.motion_ctrl.clear_motion()
+        rate.sleep()
+      except KeyboardInterrupt:
+        self.motion_ctrl.clear_motion()
+        rate.sleep
+        break
+
+      coll, obs_direction = self.chk_collision_dir(pos=None, occ_map=None, dbg=True)
+
+    print("Escaped from Obstacles")
 
 g_range_ahead = 1 # anything to start
 
@@ -561,6 +637,7 @@ def main():
                                           get_ort=tf_get_ort_e, 
                                           get_pos=tf_get_pos, 
                                           get_range=scan_processor.get_range_data, 
+                                          occ_chk=scan_processor.check_space_occupancy,
                                           target_thres=0.2, track_bound=0.5,
                                           DBG=True)
 

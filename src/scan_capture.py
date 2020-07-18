@@ -27,7 +27,7 @@ from utility import *
 class scan_proc():
 
   def __init__(self, get_ort, get_pos, 
-              scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, 
+              scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, skip_inf=True,
               bot_circumference=(0.5,0.5), circum_check=False, print_path=False):
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
@@ -38,6 +38,7 @@ class scan_proc():
 
     self.auto_gen_map = auto_gen_map
     self.invert_scan = invert
+    self.skip_inf = skip_inf
     self.bot_circumference = bot_circumference
     self.circum_check = circum_check
     self.print_path = print_path
@@ -103,13 +104,19 @@ class scan_proc():
       self.gYcoord = np.sin(angleIndex)
     
       self.gScanInit = True
+      print("Scan Init: ", self.gScanInit)
 
     self.gViewLock = True
     self.gRanges = np.array(self.gScanData.ranges)
     if self.invert_scan:
       roll_step = len(self.gRanges)>>1
       self.gRanges = np.roll(self.gRanges, roll_step)
-    self.gRanges[self.gRanges==np.inf] = self.gScanData.range_max
+
+    if self.skip_inf:
+      self.gRanges[self.gRanges==np.inf] = 0.0
+    else:
+      self.gRanges[self.gRanges==np.inf] = self.gScanData.range_max
+
     self.gViewLock = False
 
     if self.auto_gen_map:
@@ -134,7 +141,7 @@ class scan_proc():
         path_on_map = path_on_map + np.array(self.ego_loc)
         path_on_map = world_2d_tf(trans, 0, path_on_map).astype(np.int)
         #print("Path on Map: ", path_on_map)
-        pub_map[path_on_map[:,1],path_on_map[:,0],:] = np.array([255,0,0])
+        pub_map[path_on_map[:,1],path_on_map[:,0],:] = np.array([255,255,0])
       except:
         pass
       
@@ -218,9 +225,16 @@ class scan_proc():
     """
 
     scaleupRanges = ranges * self.scaleup
-    pt_x = self.gXcoord * scaleupRanges + self.shift
-    pt_y = self.gYcoord * scaleupRanges + self.shift
+    pt_x = self.gXcoord * scaleupRanges
+    pt_y = self.gYcoord * scaleupRanges
+    if self.skip_inf:
+      pt_x = np.delete(pt_x, pt_x==0)
+      pt_y = np.delete(pt_y, pt_y==0)
+    pt_x = pt_x + self.shift
+    pt_y = pt_y + self.shift
     points = np.column_stack([pt_x, pt_y]).astype(np.int32)
+    
+
     #print points
     """
     front = np.insert(points[0:octa], octa, center, axis=0)
@@ -292,16 +306,19 @@ class scan_proc():
 
 
 
-  def sample_free_pos(self, N=1, show=False):
-    ego_lim_x0 = self.ego_loc[0]-self.bot_circumference[0]
-    ego_lim_y0 = self.ego_loc[1]-self.bot_circumference[1]
-    ego_lim_x1 = self.ego_loc[0]+self.bot_circumference[0]
-    ego_lim_y1 = self.ego_loc[1]+self.bot_circumference[1]
+  def sample_free_pos(self, N=1, R=1.0, show=False):
+    map_radius = int(R*self.scaleup)
+    ego_lim_x0 = int(self.ego_loc[0]-self.bot_circumference[0]*self.scaleup)
+    ego_lim_y0 = int(self.ego_loc[1]-self.bot_circumference[1]*self.scaleup)
+    ego_lim_x1 = int(self.ego_loc[0]+self.bot_circumference[0]*self.scaleup)
+    ego_lim_y1 = int(self.ego_loc[1]+self.bot_circumference[1]*self.scaleup)
 
     free_pos = []
     while len(free_pos)<N:
-      x = np.random.randint(0+self.bot_circumference[0], self.map_dim-self.bot_circumference[0])
-      y = np.random.randint(0+self.bot_circumference[1], self.map_dim-self.bot_circumference[1])
+      #x = np.random.randint(0+self.bot_circumference[0], self.map_dim-self.bot_circumference[0])
+      #y = np.random.randint(0+self.bot_circumference[1], self.map_dim-self.bot_circumference[1])
+      x = np.random.randint(self.ego_loc[0]-map_radius, self.ego_loc[0]+map_radius)
+      y = np.random.randint(self.ego_loc[1]-map_radius, self.ego_loc[1]+map_radius)
       if not ((x>=ego_lim_x0) and (x<=ego_lim_x1)):
         if not ((y>=ego_lim_y0) and (y<=ego_lim_y1)):
           if self.check_space_occupancy((x,y), self.free_space, show=show)==0:
@@ -312,7 +329,12 @@ class scan_proc():
 
 
 
-  def check_space_occupancy(self, pos, occ_map, dbg=False, show=False):
+  def check_space_occupancy(self, pos, occ_map, dbg=False, show=False, arr_ret=False):
+    if pos is None:
+      pos = self.ego_loc
+    if occ_map is None:
+      occ_map = self.free_space
+
     ego_shape = self.ego_space.shape[0]
     map_range_max = occ_map.shape[0]
     sub_space = np.zeros((ego_shape,ego_shape))
@@ -340,9 +362,43 @@ class scan_proc():
     
     if overlap_sum>0:
       if dbg: print("Obstacles Around: %d" % overlap_sum)
+    
+    
+    if arr_ret:
+      return overlap_sum, overlap_arr.copy()
+    else:
+      return overlap_sum
 
-    return overlap_sum
 
+  def check_overlap_dir(self, pos, occ_map, dbg=False, show=False):
+    if pos is None:
+      pos = self.ego_loc
+    if occ_map is None:
+      occ_map = self.free_space
+
+    overlap_sum, overlap_arr = self.check_space_occupancy(pos, occ_map, dbg, show, arr_ret=True)
+    if overlap_sum==0:
+      return False, 0.0
+
+    ret, thresh = cv.threshold(overlap_arr, 0, 255, cv.THRESH_BINARY)
+    M = cv.moments(thresh)
+    cX = int(M["m10"] / M["m00"])
+    cY = int(M["m01"] / M["m00"])
+
+    ego_mask_center = (self.ego_space.shape[0]>>1, self.ego_space.shape[0]>>1)
+    direction = world_get_dir(ego_mask_center, (cX,cY))
+
+    if dbg: 
+      print("Ego Mask Center: ", ego_mask_center)
+      print("Overlap Center: ", cX, ',', cY)
+      print("Overlap Direction: ", direction)
+
+    return True, direction
+
+
+
+
+    
 
 
   def AStar_hFunc(self, org, pos, goal, occ_map):
@@ -427,8 +483,8 @@ class scan_proc():
         if dbg: 
           print("Reached Goal State")
         
-        print("End: ", dest)
-        print("Path: ", statePath)
+        #print("End: ", dest)
+        #print("Path: ", statePath)
         #plt.imshow(occ_map)
         #plt.show()
         

@@ -68,8 +68,6 @@ class robot_state():
     #fSpeed = 0.5*encoder_vel + 0.5*imu_vel
     fSpeed = encoder_vel
 
-    
-    
     slip = np.arctan(self.lr*np.tan(steer)/self.L)
     turn = (self.state[2] + slip) % (2*np.pi)
 

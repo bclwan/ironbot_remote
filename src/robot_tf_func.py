@@ -5,7 +5,7 @@ from tf2_msgs.msg import TFMessage
 global robot_tf
 robot_tf = None
 
-state_var = ["IDLE", "WANDER", "TRAVEL"]
+state_var = ["IDLE", "WANDER", "NAV", "TRAVEL"]
 
 def tf_callback(msg):
   global robot_tf
