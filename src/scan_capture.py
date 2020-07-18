@@ -134,7 +134,7 @@ class scan_proc():
         path_on_map = path_on_map + np.array(self.ego_loc)
         path_on_map = world_2d_tf(trans, 0, path_on_map).astype(np.int)
         #print("Path on Map: ", path_on_map)
-        pub_map[path_on_map[:,0],path_on_map[:,1],:] = np.array([255,0,0])
+        pub_map[path_on_map[:,1],path_on_map[:,0],:] = np.array([255,0,0])
       except:
         pass
       
@@ -292,7 +292,7 @@ class scan_proc():
 
 
 
-  def sample_free_pos(self, N=1):
+  def sample_free_pos(self, N=1, show=False):
     ego_lim_x0 = self.ego_loc[0]-self.bot_circumference[0]
     ego_lim_y0 = self.ego_loc[1]-self.bot_circumference[1]
     ego_lim_x1 = self.ego_loc[0]+self.bot_circumference[0]
@@ -304,14 +304,15 @@ class scan_proc():
       y = np.random.randint(0+self.bot_circumference[1], self.map_dim-self.bot_circumference[1])
       if not ((x>=ego_lim_x0) and (x<=ego_lim_x1)):
         if not ((y>=ego_lim_y0) and (y<=ego_lim_y1)):
-          free_pos.append((x,y))
+          if self.check_space_occupancy((x,y), self.free_space, show=show)==0:
+            free_pos.append((x,y))
 
     return free_pos
 
 
 
 
-  def check_space_occupancy(self, pos, occ_map, dbg=False):
+  def check_space_occupancy(self, pos, occ_map, dbg=False, show=False):
     ego_shape = self.ego_space.shape[0]
     map_range_max = occ_map.shape[0]
     sub_space = np.zeros((ego_shape,ego_shape))
@@ -328,7 +329,11 @@ class scan_proc():
       if dbg: print("Into the Unknown")
       return -1
 
-    sub_space = occ_map[map_range_x0:map_range_x1, map_range_y0:map_range_y1]
+    sub_space = occ_map[map_range_y0:map_range_y1, map_range_x0:map_range_x1]
+    if show:
+      print("POS: ", pos)
+      plt.imshow(sub_space)
+      plt.show()
 
     overlap_arr = np.multiply(sub_space, self.ego_space)
     overlap_sum = np.sum(overlap_arr)
@@ -343,6 +348,9 @@ class scan_proc():
   def AStar_hFunc(self, org, pos, goal, occ_map):
     score = 0.0
 
+    dist_weight = 1.0
+
+    
     dir_limit = np.pi*60.0/180.0
     main_dir = world_get_dir(org, goal)
     move_dir = world_get_dir(org, pos)
@@ -352,6 +360,7 @@ class scan_proc():
     if diff>dir_limit:
       score = -1.0
       return score
+    
 
     #Collision Check
     overlap = self.check_space_occupancy(pos, occ_map)
@@ -361,29 +370,30 @@ class scan_proc():
 
     dist = manhattan_dist(pos, goal)
     if dist==0:
-      score = 1.0
+      score = 0.0
     else:
-      score = 1.0/dist
+      score += dist*dist_weight
 
     return score
 
     
 
-  def get_free_loc_around(self, pos, occ_map):
+  def get_free_loc_around(self, pos, occ_map, step=1):
     free_space = []
-    candidates = [(pos[0]+1, pos[1]),
-                  (pos[0]-1, pos[1]),
-                  (pos[0], pos[1]+1),
-                  (pos[0], pos[1]-1),
-                  (pos[0]+1, pos[1]+1),
-                  (pos[0]+1, pos[1]-1),
-                  (pos[0]-1, pos[1]+1),
-                  (pos[0]-1, pos[1]-1)
+    candidates = [(pos[0]+step, pos[1]),
+                  (pos[0]-step, pos[1]),
+                  (pos[0], pos[1]+step),
+                  (pos[0], pos[1]-step),
+                  (pos[0]+step, pos[1]+step),
+                  (pos[0]+step, pos[1]-step),
+                  (pos[0]-step, pos[1]+step),
+                  (pos[0]-step, pos[1]-step)
                   ]
     for c in candidates:
       if occ_map[c[0]][c[1]]==0:
         free_space.append(c)
-        
+
+
     return free_space
 
 
@@ -393,6 +403,7 @@ class scan_proc():
       return None
     startPos = self.ego_loc
     occ_map = self.free_space.copy()
+    
     self.next_path_pose = {"pos":self.get_pos(), "ort":self.get_ort()[2], "time":time.time()}
     
     begin = []
@@ -400,10 +411,12 @@ class scan_proc():
     if dbg:
       print("Begin: ", begin)
       print("End: ", dest)
-    
+
     frontier = PriorityQueue()
     frontier.push(begin, 0)
     explored = set()
+
+    #a=raw_input()
 
     while not frontier.isEmpty():
       statePath = frontier.pop()
@@ -411,7 +424,14 @@ class scan_proc():
       currNode = statePath[-1]
       
       if (currNode==dest):
-        if dbg: print("Reached Goal State")
+        if dbg: 
+          print("Reached Goal State")
+        
+        print("End: ", dest)
+        print("Path: ", statePath)
+        #plt.imshow(occ_map)
+        #plt.show()
+        
         self.next_path = statePath
         return statePath
 
@@ -426,11 +446,13 @@ class scan_proc():
           for n in nextNode:
             stateVal = self.AStar_hFunc(currNode, n, dest, occ_map)
             if dbg: print(n, stateVal)
-            if stateVal>0:
+            if stateVal>=0:
               newStatePath = statePath[:]
               newStatePath.insert(len(newStatePath), n)
               frontier.push(newStatePath, stateVal)
               if dbg: print("Add Path: ", newStatePath)
+
+      #a=raw_input()
 
 
 

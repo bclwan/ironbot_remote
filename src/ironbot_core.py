@@ -116,7 +116,7 @@ def main():
 
       path = None
       while path==None:
-        rand_goal = scan_processor.sample_free_pos(1)
+        rand_goal = scan_processor.sample_free_pos(1, show=False)
         path = scan_processor.local_path_AStar_search(rand_goal[0], dbg=False)
 
       print("GO Next: ", rand_goal)  
