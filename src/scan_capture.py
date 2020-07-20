@@ -1,11 +1,14 @@
 #!/usr/bin/env python2
 
 import rospy
+from std_msgs.msg import Int32MultiArray
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan, Image
 #from tf.transformations import euler_from_quaternion
 #from tf2_msgs.msg import TFMessage
 from cv_bridge import CvBridge
+
+from ironbot_rmt_ctrl.srv import GetScanPoint, GetScanPointResponse
 
 import time
 import numpy as np
@@ -21,7 +24,6 @@ import cv2 as cv
 from robot_tf_func import *
 from utility import *
 
-#from robot_tf_func import *
 
 
 class scan_proc():
@@ -29,8 +31,7 @@ class scan_proc():
   def __init__(self, get_ort, get_pos, 
               scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, skip_inf=True,
               bot_circumference=(0.5,0.5), circum_check=False, print_path=False):
-    self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
-    self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
+    
     self.pub_scan_map = pub_scan_map
 
     self.get_ort = get_ort
@@ -58,7 +59,8 @@ class scan_proc():
 
     self.gRanges = None
 
-    self.full_points = None
+    
+    self.raw_points = None
 
     self.scaleup = scaleup
     self.base_dim = 0.0
@@ -82,6 +84,9 @@ class scan_proc():
     self.sample_size = 5
 
     self.create_ego_occupancy(bot_circumference[0], bot_circumference[1])
+    self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
+    self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
+    self.service_get_pts = rospy.Service('scan_points', GetScanPoint, self.get_scan_pts)
 
 
 
@@ -158,6 +163,13 @@ class scan_proc():
     return self.gRanges.copy()
 
 
+  def get_scan_pts(self, rqt):
+    points = self.raw_points.copy()
+    points = points.tolist()
+    print(type(points))
+
+    return GetScanPointResponse(points)
+
 
   def next_state_collision_est(self, safe_dist, direction):
     collision = True
@@ -233,7 +245,7 @@ class scan_proc():
     pt_x = pt_x + self.shift
     pt_y = pt_y + self.shift
     points = np.column_stack([pt_x, pt_y]).astype(np.int32)
-    
+    self.raw_points = points.copy()
 
     #print points
     """
@@ -344,12 +356,18 @@ class scan_proc():
     map_range_y1 = pos[1]+(ego_shape>>1)
     
     if map_range_x0<0 or map_range_y0<0:
-      if dbg: print("Into the Unknown")
-      return -1
+      if dbg: print("Into the Unknown: ", map_range_x0, map_range_y0)
+      if arr_ret:
+        return -1, None
+      else:
+        return -1
       
     if map_range_x1>=map_range_max or map_range_y1>=map_range_max:
-      if dbg: print("Into the Unknown")
-      return -1
+      if dbg: print("Into the Unknown", map_range_x1, map_range_y1)
+      if arr_ret:
+        return -1, None
+      else:
+        return -1
 
     sub_space = occ_map[map_range_y0:map_range_y1, map_range_x0:map_range_x1]
     if show:
@@ -537,7 +555,7 @@ def scan_disp_server():
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
   scan_processor = scan_proc(scaleup=100.0, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
-                            pub_scan_map=True, auto_gen_map=True, invert=False, 
+                            pub_scan_map=True, auto_gen_map=True, invert=False, skip_inf=False, print_path=False,
                             bot_circumference=(0.2, 0.2), circum_check=True)
 
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)
@@ -558,6 +576,7 @@ def scan_disp_server():
 
 def scan_disp_client():
   rospy.init_node('scan_capture')
+  rospy.wait_for_message("/scan_diagram", Image)
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)
   rate = rospy.Rate(100)
 

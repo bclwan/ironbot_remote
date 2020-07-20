@@ -50,6 +50,8 @@ def get_next_pos(direction, distance):
 def main():
   #Pre-set
   SIM = False
+  USE_LOCAL_ODOM = True
+
   if len(sys.argv)>1:
     if sys.argv[1]=="sim":
       SIM = True
@@ -58,6 +60,7 @@ def main():
   rospy.init_node('ironbot', anonymous=True)
 
   tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
+  lo_sub = rospy.Subscriber('local_odom', Odometry, local_pose_callback)
   state_pub = rospy.Publisher('state', String, queue_size=1, latch=True)
   cmd_sub = rospy.Subscriber('state_cmd', String, cmd_callback)
   cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
@@ -74,7 +77,7 @@ def main():
 
   scan_processor = scan_proc(get_ort=tf_get_ort_e, get_pos=tf_get_pos, 
                             scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, skip_inf=False,
-                            invert=scanInvert, bot_circumference=(0.3, 0.2), print_path=True)
+                            invert=scanInvert, bot_circumference=(0.25, 0.25), print_path=True)
   
   while not scan_processor.gScanInit:
     print("Waiting Scan Init..")
@@ -121,7 +124,7 @@ def main():
     
     elif robot_state=="NAV":
       print("==NAVIGATION MODE==")
-      a = raw_input()
+      #a = raw_input()
 
       print("Searching Path...")
       nav_rate = rospy.Rate(1)
@@ -183,8 +186,8 @@ def main():
       pose_msg.position.x = next_pos[0]
       pose_msg.position.y = next_pos[1]
 
-      print "WANDER MODE..."
-      print next_pos
+      print("WANDER MODE...")
+      print(next_pos)
       
       if not trapped:
         try:

@@ -1,9 +1,12 @@
 from tf.transformations import euler_from_quaternion
 from tf2_msgs.msg import TFMessage
-
+from nav_msgs.msg import Odometry
 
 global robot_tf
 robot_tf = None
+
+global robot_local_pose
+robot_local_pose = Odometry()
 
 state_var = ["IDLE", "WANDER", "NAV", "TRAVEL"]
 
@@ -32,4 +35,30 @@ def tf_get_pos():
     pass
     #print "Waiting current pose"
   return (robot_tf.translation.x, robot_tf.translation.y)
+
+
+
+# Local Pose
+def local_pose_callback(msg):
+  global robot_local_pose
+  robot_local_pose = msg
+
+
+def local_pose_get_pos():
+  global robot_local_pose
+  return (robot_local_pose.pose.pose.position.x, robot_local_pose.pose.pose.position.y)
+
+
+def local_pose_get_ort_q():
+  global robot_local_pose
+  ort = robot_local_pose.pose.pose.orientation
+  return (ort.x, ort.y, ort.z, ort.w)
+
+
+def local_pose_get_ort_e():
+  return euler_from_quaternion(local_pose_get_ort_q())
+
+
+
+
 

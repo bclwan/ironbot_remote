@@ -10,6 +10,7 @@ from geometry_msgs.msg import Point, Quaternion, Twist, Vector3, TransformStampe
 from tf.transformations import euler_from_quaternion
 from tf2_msgs.msg import TFMessage
 
+from ironbot_rmt_ctrl.srv import RstLocalOdom
 
 from robot_tf_func import *
 
@@ -17,10 +18,6 @@ from robot_tf_func import *
 
 class control_panel():
   def __init__(self):
-    global map_plt
-    global map_org
-    global map_ort
-
     self.state = 0
 
     self.panel = tk.Tk()
@@ -29,10 +26,14 @@ class control_panel():
     self.panel.resizable(0,0)
 
     self.tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
+    self.lo_sub = rospy.Subscriber('local_odom', Odometry, local_pose_callback)
     self.state_sub = rospy.Subscriber('state', String, self.st_callback)
     self.state_pub = rospy.Publisher('state_cmd', String, queue_size=1, latch=True)
     self.odomest_cmd = rospy.Publisher('est_cmd', Int8, queue_size=1, latch=True)
     self.drive_lock = rospy.Publisher('DRV_LOCK', UInt8, queue_size=1, latch=True)
+
+    rospy.wait_for_service('rst_local_odom')
+    self.service_rst_local_odom = rospy.ServiceProxy('rst_local_odom', RstLocalOdom)
 
     #Initialize Cmd
     self.state_pub.publish("NONE")
@@ -67,6 +68,9 @@ class control_panel():
     buttonCommand_6 = tk.Button(self.panel, text="REBOOT MOTOR", command=lambda: self.reboot_motor())
     buttonCommand_6.pack()
 
+    buttonCommand_7 = tk.Button(self.panel, text="RESET LOCAL ODOM", command=lambda: self.service_rst_local_odom(0))
+    buttonCommand_7.pack()
+
     buttonClose = tk.Button(self.panel, text="!==Close==!", command=self.panel.destroy)
     buttonClose.pack()
 
@@ -75,6 +79,9 @@ class control_panel():
 
     self.robot_pose = tk.Label(self.panel, text=self.get_robot_tf(), anchor=tk.W, width=100)
     self.robot_pose.pack()
+
+    self.robot_local_pose = tk.Label(self.panel, text=self.get_local_pose(), anchor=tk.W, width=100)
+    self.robot_local_pose.pack()
 
     self.panel.after(1, self.update_info)
     self.panel.mainloop()
@@ -106,7 +113,18 @@ class control_panel():
     y_msg = "%.3f" % y
     o_msg = "%.3f" % o[2]
 
-    return 'Pos: ('+x_msg+','+y_msg+')'+" Ort: "+o_msg
+    return 'World Pose: ('+x_msg+','+y_msg+')'+" Ort: "+o_msg
+
+
+  def get_local_pose(self):
+    x, y = local_pose_get_pos()
+    o = local_pose_get_ort_e()
+    x_msg = "%.3f" % x
+    y_msg = "%.3f" % y
+    o_msg = "%.3f" % o[2]
+
+    return 'Local Pose: ('+x_msg+','+y_msg+')'+" Ort: "+o_msg
+
 
 
   def set_robot_state(self, cmd):
@@ -148,14 +166,11 @@ def main_console():
   # ROS setup
   rospy.init_node('ironbot_console', anonymous=True)
 
-  tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
+  #tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
   
-
-  print("ROS Node setup done")
-
   # Console setup
   ib_panel = control_panel()
-
+  print("ROS Node setup done")
 
   
   

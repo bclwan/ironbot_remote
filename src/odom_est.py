@@ -8,6 +8,10 @@ from geometry_msgs.msg import Point, Quaternion, Twist, Vector3, TransformStampe
 import tf
 import tf2_ros
 
+from ironbot_rmt_ctrl.srv import RstLocalOdom, RstLocalOdomResponse
+
+import sys
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -26,7 +30,10 @@ glbBotLoc = []
 
 class robot_state():
   def __init__(self, start_time=0.0, tyre_r=0.0336, steer_max=2.84, steer_range=50.0, L=0.14, lr=0.02):
+    self.rstLocalOdom_service = rospy.Service('rst_local_odom', RstLocalOdom, self.resetLocalOdom)
+
     self.state = np.zeros(5, dtype=np.float)  #x, y, theta, vx, w
+    self.local_state = np.zeros(5, dtype=np.float)
     self.last_time = start_time
     
     self.tyre_radius = tyre_r
@@ -47,11 +54,21 @@ class robot_state():
     
     rospy.Subscriber("est_cmd", Int8, self.consoleCmd_callback)
 
+
+
   def consoleCmd_callback(self, msg):
-    if msg.data==1:
+    if msg.data==1: #reset odom state
       self.state = np.zeros(5, dtype=np.float)
+      self.local_state = np.zeros(5, dtype=np.float)
       self.last_time = rospy.Time.now().to_sec()
       self.imu_record = np.zeros((self.record_size,4), dtype=np.float)
+
+
+  def resetLocalOdom(self, rst):
+    self.local_state = np.zeros(5, dtype=np.float)
+    print("Reset Local Odometry")
+    return RstLocalOdomResponse(0)
+    
 
   def state_pred(self, wheel_rps, angular_v, acc_x, acc_y, control, t):
     dt = float(t - self.last_time)
@@ -74,9 +91,8 @@ class robot_state():
     dx = fSpeed*np.cos(turn)*dt
     dy = fSpeed*np.sin(turn)*dt
 
-    print "[%d] dt:%f, dx:%f, EncVel:%f, Turn:%f, IMUVel:%f"% (self.idx, dt, dx, encoder_vel, turn, imu_vel)
+    print("[%d] dt:%f, dx:%f, EncVel:%f, Turn:%f, IMUVel:%f"% (self.idx, dt, dx, encoder_vel, turn, imu_vel))
     
-
     pred_angular_v = fSpeed*np.cos(slip)*np.tan(steer)/self.L
     mean_angular_v = 0.0
     if fSpeed!=0:
@@ -88,6 +104,13 @@ class robot_state():
     self.state[2] = theta
     self.state[3] = fSpeed
     self.state[4] = mean_angular_v
+
+    self.local_state[0] += dx
+    self.local_state[1] += dy
+    self.local_state[2] = (self.local_state[2] + mean_angular_v*dt) % (2*np.pi)
+    self.local_state[3] = fSpeed
+    self.local_state[4] = mean_angular_v
+
     self.last_time = t
 
     self.imu_record[self.record_pt] = np.array([dt, acc_x, acc_y, angular_v])
@@ -102,6 +125,7 @@ class robot_state():
     print self.state[0], self.state[1]
     """
 
+  
     
 
 def plt_animate(i):
@@ -139,6 +163,12 @@ def cmd_sub_callback(cmdData):
 
 
 def odometer():
+  PUB_ODOM = True
+
+  if len(sys.argv)>1:
+    if sys.argv[1]=="sim":
+      PUB_ODOM = False
+
   # In ROS, nodes are uniquely named. If two nodes with the same
   # name are launched, the previous one is kicked off. The
   # anonymous=True flag means that rospy will choose a unique
@@ -153,6 +183,10 @@ def odometer():
 
   odom_broc = tf.TransformBroadcaster()
   twist_pub = rospy.Publisher("speedometer", Twist, queue_size=1)
+  localOdom_pub = rospy.Publisher("local_odom", Odometry, queue_size=1)
+  
+  msgLocalOdom = Odometry()
+  localOdom_pub.publish(msgLocalOdom)
 
   vel_msg = Twist()
 
@@ -183,9 +217,20 @@ def odometer():
     #print("WZ:", glbWZ, "RPS:", glbRPS, "CMD:", glbCmd)
     #print("X=", bot.state[0], "Y=", bot.state[1], "VX=", bot.state[3])
 
-    odom_tran = (float(bot.state[0]), float(bot.state[1]), 0.0)
-    odom_quat = tf.transformations.quaternion_from_euler(0.0,0.0,float(bot.state[2]))
-    odom_broc.sendTransform(odom_tran, odom_quat, current_time, "base_link", "odom")
+    if PUB_ODOM:
+
+      odom_tran = (float(bot.state[0]), float(bot.state[1]), 0.0)
+      odom_quat = tf.transformations.quaternion_from_euler(0.0,0.0,float(bot.state[2]))
+      odom_broc.sendTransform(odom_tran, odom_quat, current_time, "base_link", "odom")
+
+      msgLocalOdom.pose.pose.position.x = bot.local_state[0]
+      msgLocalOdom.pose.pose.position.y = bot.local_state[1]
+      local_ort = tf.transformations.quaternion_from_euler(0.0,0.0,bot.local_state[2])
+      msgLocalOdom.pose.pose.orientation.x = local_ort[0]
+      msgLocalOdom.pose.pose.orientation.y = local_ort[1]
+      msgLocalOdom.pose.pose.orientation.z = local_ort[2]
+      msgLocalOdom.pose.pose.orientation.w = local_ort[3]
+      localOdom_pub.publish(msgLocalOdom)
 
     vel_msg.linear.x = bot.state[3]
     vel_msg.angular.z = bot.state[4]
