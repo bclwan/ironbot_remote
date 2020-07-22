@@ -1,8 +1,8 @@
 <launch>
-	<node name="ironbot_core" pkg="ironbot_rmt_ctrl" type="ironbot_core.py" />
-	<node name="odom_est" pkg="ironbot_rmt_ctrl" type="odom_est.py"/>
+	<node name="ironbot_core" pkg="ironbot_rmt_ctrl" type="ironbot_core.py" args="sim"/>
+	<!-- <node name="odom_est" pkg="ironbot_rmt_ctrl" type="odom_est.py"/> -->
 	<node name="console" pkg="ironbot_rmt_ctrl" type="console.py" />
 	<!-- <node name="map_panel" pkg="ironbot_rmt_ctrl" type="map_capture.py" />	 -->
-	<node name="scan_panel" pkg="ironbot_rmt_ctrl" type="scan_capture.py" />
+	<node name="scan_panel" pkg="ironbot_rmt_ctrl" type="scan_capture.py" args="client"/>
 	<!-- <node name="slam" pkg="slam_toolbox" type="async_slam_toolbox_node" /> -->
 </launch>

@@ -165,10 +165,12 @@ class scan_proc():
 
   def get_scan_pts(self, rqt):
     points = self.raw_points.copy()
-    points = points.tolist()
-    print(type(points))
+    #print(points[1:3])
+    points_x = points[:,0]
+    points_y = points[:,1]
+    #print(points_x[1:3], points_y[1:3])
 
-    return GetScanPointResponse(points)
+    return GetScanPointResponse(points_x.tolist(), points_y.tolist())
 
 
   def next_state_collision_est(self, safe_dist, direction):

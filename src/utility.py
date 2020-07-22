@@ -2,6 +2,7 @@ import collections
 import heapq
 
 import numpy as np
+
 from scipy.spatial.transform import Rotation as R
 
 
@@ -97,3 +98,22 @@ def world_dir_diff(a0, a1):
 
 def manhattan_dist(p0, p1):
   return abs(p0[0]-p1[0]) + abs(p0[1]-p1[1])
+
+
+
+def theta_rot(src_ort, theta):
+  rot = R.from_euler('z', theta, degrees=False)
+  ego = np.array([np.cos(src_ort), np.sin(src_ort), 0.0])
+  new_ego = rot.apply(ego)
+  new_ort = 0.0
+
+  if new_ego[1]==0.0 and np.sign(new_ego[0])==-1:
+    new_ort = np.pi
+  elif new_ego[0]==0.0:
+    new_ort = np.sign*np.pi/2
+  else:
+    new_ort = np.arctan(new_ego[1]/abs(new_ego[0]))
+
+  return new_ort
+
+
