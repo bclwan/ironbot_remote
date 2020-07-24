@@ -1,4 +1,4 @@
 int32 dummy
 ---
-int32[] points_x
-int32[] points_y
+float32[] points_x
+float32[] points_y

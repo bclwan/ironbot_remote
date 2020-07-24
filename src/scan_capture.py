@@ -29,8 +29,8 @@ from utility import *
 class scan_proc():
 
   def __init__(self, get_ort, get_pos, 
-              scaleup=40.0, pub_scan_map=False, auto_gen_map=False, invert=False, skip_inf=True,
-              bot_circumference=(0.5,0.5), circum_check=False, print_path=False):
+              scaleup=40.0, zoom=1, pub_scan_map=False, auto_gen_map=False, invert=False, skip_inf=True,
+              bot_circumference=(0.5,0.5), circum_check=False, print_path=False, marker=False):
     
     self.pub_scan_map = pub_scan_map
 
@@ -43,6 +43,7 @@ class scan_proc():
     self.bot_circumference = bot_circumference
     self.circum_check = circum_check
     self.print_path = print_path
+    self.marker = marker
 
     self.gScanInit = False
     self.gScanData = LaserScan()
@@ -63,6 +64,7 @@ class scan_proc():
     self.raw_points = None
 
     self.scaleup = scaleup
+    self.zoom = zoom
     self.base_dim = 0.0
     self.map_dim = 0
     self.shift = 0
@@ -70,8 +72,8 @@ class scan_proc():
     self.free_space = None
 
     self.next_path = []
-    self.next_path_pose = {"pos":self.get_pos(), "ort":self.get_ort()[2], "time":time.time()}
-
+    #self.next_path_pose = {"pos":self.get_pos(), "ort":self.get_ort()[2], "time":time.time()}
+    self.next_path_pose = {"pos":(0.0,0.0), "ort":0.0, "time":time.time()}
     self.ego_space = None
     self.ego_mass = 0
     self.ego_loc = (0,0)
@@ -85,8 +87,12 @@ class scan_proc():
 
     self.create_ego_occupancy(bot_circumference[0], bot_circumference[1])
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
+    print("Subscribe scan data")
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
-    self.service_get_pts = rospy.Service('scan_points', GetScanPoint, self.get_scan_pts)
+    print("Publish scan map")
+    self.service_get_pts = rospy.Service('/scan_points', GetScanPoint, self.get_scan_pts)
+
+    print("Scan Processor setup completed")
 
 
 
@@ -118,9 +124,9 @@ class scan_proc():
       self.gRanges = np.roll(self.gRanges, roll_step)
 
     if self.skip_inf:
-      self.gRanges[self.gRanges==np.inf] = 0.0
+      self.gRanges[abs(self.gRanges)==np.inf] = -1.0
     else:
-      self.gRanges[self.gRanges==np.inf] = self.gScanData.range_max
+      self.gRanges[abs(self.gRanges)==np.inf] = self.gScanData.range_max
 
     self.gViewLock = False
 
@@ -133,6 +139,7 @@ class scan_proc():
 
   def scan_publish(self):
     pub_map = self.scan_map.copy()
+
     if self.print_path and len(self.next_path)>0:
       try:
         path = self.next_path[:]
@@ -149,7 +156,13 @@ class scan_proc():
         pub_map[path_on_map[:,1],path_on_map[:,0],:] = np.array([255,255,0])
       except:
         pass
+    
+    if self.zoom>1:
+      map_len = int(self.map_dim/self.zoom)
+      half_len = map_len>>1
+      pub_map = pub_map[self.ego_loc[0]-half_len:self.ego_loc[0]+half_len,self.ego_loc[1]-half_len:self.ego_loc[1]+half_len]
       
+
     bridge = CvBridge()
     imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90(pub_map, 1)), encoding="bgr8")
     self.scan_pub.publish(imgMsg)
@@ -207,10 +220,7 @@ class scan_proc():
 
 
   def gen_local_map(self):
-    while not self.gScanInit:
-      pass
-    while self.gViewLock:
-      pass
+    while not self.gScanInit:gXcoord
     
     #Image Axis
     # o---------->x
@@ -239,15 +249,19 @@ class scan_proc():
     """
 
     scaleupRanges = ranges * self.scaleup
-    pt_x = self.gXcoord * scaleupRanges
-    pt_y = self.gYcoord * scaleupRanges
+    pt_x = self.gXcoord * ranges
+    pt_y = self.gYcoord * ranges
+
     if self.skip_inf:
-      pt_x = np.delete(pt_x, pt_x==0)
-      pt_y = np.delete(pt_y, pt_y==0)
-    pt_x = pt_x + self.shift
-    pt_y = pt_y + self.shift
-    points = np.column_stack([pt_x, pt_y]).astype(np.int32)
-    self.raw_points = points.copy()
+      pt_x = np.delete(pt_x, ranges!=-1.0)
+      pt_y = np.delete(pt_y, ranges!=-1.0)
+    
+    points = np.column_stack([pt_x, pt_y]).astype(np.float)
+    self.raw_points = points.copy() #no scaled up or shift
+    
+    points = (points*self.scaleup).astype(np.int32)
+    points += self.shift
+
 
     #print points
     """
@@ -271,24 +285,26 @@ class scan_proc():
     plt.show()
     a = raw_input()
     """
-
+    #Ego coordinate
     eCenter = (center[0], center[1])
-    axes = (int(self.bot_circumference[0]*self.scaleup), int(self.bot_circumference[1]*self.scaleup))
-    angle = 0.0
-    startAng = 0.0
-    endAng = 360.0
-    eColor = (0,0,255)
-    thickness = -1
-    cv.ellipse(self.scan_map, eCenter, axes, angle, startAng, endAng, eColor, thickness)
 
-    arrow_head = np.array((center[0]+7, center[1]))
-    arrow_left = np.array((center[0]-5, center[1]-6))
-    arrow_right = np.array((center[0]-5, center[1]+6))
-    center_arrow = np.array([arrow_head, arrow_left, arrow_right])
-    cv.drawContours(self.scan_map, [center_arrow],0,(0,255,0),-1)
-    self.scan_map[center[0],center[1],0] = 255
-    self.scan_map[center[0],center[1],1] = 0 
-    self.scan_map[center[0],center[1],2] = 0
+    if self.marker:
+      axes = (int(self.bot_circumference[0]*self.scaleup), int(self.bot_circumference[1]*self.scaleup))
+      angle = 0.0
+      startAng = 0.0
+      endAng = 360.0
+      eColor = (0,0,255)
+      thickness = -1
+      cv.ellipse(self.scan_map, eCenter, axes, angle, startAng, endAng, eColor, thickness)
+
+      arrow_head = np.array((center[0]+7, center[1]))
+      arrow_left = np.array((center[0]-5, center[1]-6))
+      arrow_right = np.array((center[0]-5, center[1]+6))
+      center_arrow = np.array([arrow_head, arrow_left, arrow_right])
+      cv.drawContours(self.scan_map, [center_arrow],0,(0,255,0),-1)
+      self.scan_map[center[0],center[1],0] = 255
+      self.scan_map[center[0],center[1],1] = 0 
+      self.scan_map[center[0],center[1],2] = 0
 
     """
     cv.drawContours(self.scan_map, [front],-1,(255,0,0),1)
@@ -554,10 +570,11 @@ def display_scan_diagram(i):
 def scan_disp_server():
   rospy.init_node('scan_capture')
   tf_sub = rospy.Subscriber('tf', TFMessage, tf_callback)
+  print("Subscribe TF")
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
-  scan_processor = scan_proc(scaleup=100.0, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
-                            pub_scan_map=True, auto_gen_map=True, invert=False, skip_inf=False, print_path=False,
+  scan_processor = scan_proc(scaleup=50.0, zoom=2, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
+                            pub_scan_map=True, auto_gen_map=True, invert=True, skip_inf=False, print_path=False,
                             bot_circumference=(0.2, 0.2), circum_check=True)
 
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)

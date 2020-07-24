@@ -32,7 +32,8 @@ class control_panel():
     self.odomest_cmd = rospy.Publisher('est_cmd', Int8, queue_size=1, latch=True)
     self.drive_lock = rospy.Publisher('DRV_LOCK', UInt8, queue_size=1, latch=True)
 
-    rospy.wait_for_service('rst_local_odom')
+    #print("Waiting for Odom reset service")
+    #rospy.wait_for_service('rst_local_odom')
     self.service_rst_local_odom = rospy.ServiceProxy('rst_local_odom', RstLocalOdom)
 
     #Initialize Cmd

@@ -1,8 +1,9 @@
 <launch>
 
 	<node name="odom_est" pkg="ironbot_rmt_ctrl" type="odom_est.py" args="sim"/>
-	<node name="console" pkg="ironbot_rmt_ctrl" type="console.py" />
 	<node name="scan_panel" pkg="ironbot_rmt_ctrl" type="scan_capture.py" args="server"/>
+	<node name="console" pkg="ironbot_rmt_ctrl" type="console.py" />
+	
 
 	
 </launch>
