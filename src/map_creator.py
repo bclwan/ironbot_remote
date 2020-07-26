@@ -1,12 +1,13 @@
 #!/usr/bin/env python2
 
 import rospy
-from std_msgs.msg import Int8, Int32MultiArray, Float32
+from std_msgs.msg import Int8, Int32, Int32MultiArray, Float32
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan, Image
 from cv_bridge import CvBridge
 
 from ironbot_rmt_ctrl.srv import RstMapping, RstMappingResponse
+from ironbot_rmt_ctrl.srv import GetMapArea, GetMapAreaResponse
 
 import numpy as np
 from scipy.ndimage import rotate
@@ -34,8 +35,12 @@ class map_creator():
     self.glb_map_size = (0,0)
 
     self.odom = odom_listener()
+    self.map_area_pub = rospy.Publisher("/map_area", Int32, queue_size=1, latch=True)
     self.scan_map_sub = rospy.Subscriber("/free_space", Image, self.occp_img_callback)
     self.rstMapping_service = rospy.Service('rst_mapping', RstMapping, self.map_reset)
+    self.getMapArea_service = rospy.Service('get_map_area', GetMapArea, self.map_area)
+
+    self.map_area_pub.publish(0)
 
     self.ego_ort = 0.0
     self.ego_pos = (0.0, 0.0)
@@ -51,8 +56,13 @@ class map_creator():
     self.ego_map_loc = (0,0)
     self.ego_map_org = (0.0, 0.0)
     self.map_init = False
+    self.map_area_pub.publish(0)
     print("Reset Mapping")
     return RstMappingResponse(0)
+
+
+  def map_area(self, get):
+    return GetMapAreaResponse(self.glb_map_size[0]*self.glb_map_size[1])
 
 
   def occp_img_callback(self, imgMsg):
@@ -189,6 +199,7 @@ class map_creator():
       self.ego_pos = new_pos
       self.ego_ort = new_ort
       
+      self.map_area_pub.publish(self.glb_map_size[0]*self.glb_map_size[1])
 
 
 def mapping():
