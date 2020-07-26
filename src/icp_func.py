@@ -88,6 +88,9 @@ def icp(reference_points, points, max_iterations=100, distance_threshold=0.3, co
   """
 
   transformation_history = []
+  rotation_history = []
+  x_translation_history = []
+  y_translation_history = []
   nbrs = NearestNeighbors(n_neighbors=1, algorithm='kd_tree').fit(reference_points)
 
   for iter_num in range(max_iterations):
@@ -133,6 +136,9 @@ def icp(reference_points, points, max_iterations=100, distance_threshold=0.3, co
 
     # update transformation history
     transformation_history.append(np.hstack((rot, np.array([[closest_translation_x], [closest_translation_y]]))))
+    rotation_history.append(closest_rot_angle)
+    x_translation_history.append(closest_translation_x)
+    y_translation_history.append(closest_translation_y)
 
     # check convergence
     if (abs(closest_rot_angle) < convergence_rotation_threshold) \
@@ -142,4 +148,5 @@ def icp(reference_points, points, max_iterations=100, distance_threshold=0.3, co
         print('Converged!')
       break
 
-  return transformation_history, points
+  #return transformation_history, points
+  return rotation_history, x_translation_history, y_translation_history, points

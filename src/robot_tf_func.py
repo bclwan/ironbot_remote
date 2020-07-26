@@ -1,3 +1,5 @@
+import rospy
+
 from tf.transformations import euler_from_quaternion
 from tf2_msgs.msg import TFMessage
 from nav_msgs.msg import Odometry
@@ -60,5 +62,37 @@ def local_pose_get_ort_e():
 
 
 
+class odom_listener():
+  def __init__(self, topic='/tf'):
+    self.tf_sub = rospy.Subscriber(topic, TFMessage, self.tf_msg_callback)
+    self.transform = None
+    self.pos = (0.0, 0,0)
+    self.ort = 0.0
+    self.ort_q = (0.0, 0.0, 0.0, 0.0)
 
 
+  def tf_msg_callback(self, msg):
+    if msg.transforms[0].header.frame_id=='odom':
+      self.transform = msg.transforms[0].transform
+      self.upd_pos()
+      self.upd_ort()
+
+
+  def upd_pos(self):
+    if self.transform is not None:
+      self.pos = (self.transform.translation.x, self.transform.translation.y)
+
+
+  def upd_ort(self):
+    if self.transform is not None:
+      self.ort_q = (self.transform.rotation.x, self.transform.rotation.y, 
+                    self.transform.rotation.z, self.transform.rotation.w)
+      self.ort = euler_from_quaternion(self.ort_q)
+
+
+  def get_pos(self):
+    return (self.pos[0], self.pos[1])
+
+  
+  def get_ort(self):
+    return self.ort

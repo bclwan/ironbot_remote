@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 
 import rospy
-from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Int8, Int32MultiArray, Float32
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan, Image
 #from tf.transformations import euler_from_quaternion
@@ -89,8 +89,16 @@ class scan_proc():
     self.scan_sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
     print("Subscribe scan data")
     self.scan_pub = rospy.Publisher("/scan_diagram", Image, queue_size=1)
-    print("Publish scan map")
+    self.occp_pub = rospy.Publisher("/free_space", Image, queue_size=1)
     self.service_get_pts = rospy.Service('/scan_points', GetScanPoint, self.get_scan_pts)
+
+    self.coll_flag = 0
+    self.coll_flag_pub = rospy.Publisher("/coll_flag", Int8, queue_size=1)
+    self.coll_flag_pub.publish(self.coll_flag)
+
+    self.coll_dirc = 0.0
+    self.coll_dirc_pub = rospy.Publisher("/coll_dirc", Float32, queue_size=1)
+    self.coll_dirc_pub.publish(self.coll_dirc)
 
     print("Scan Processor setup completed")
 
@@ -139,6 +147,7 @@ class scan_proc():
 
   def scan_publish(self):
     pub_map = self.scan_map.copy()
+    occ_map = self.free_space.copy()
 
     if self.print_path and len(self.next_path)>0:
       try:
@@ -161,12 +170,16 @@ class scan_proc():
       map_len = int(self.map_dim/self.zoom)
       half_len = map_len>>1
       pub_map = pub_map[self.ego_loc[0]-half_len:self.ego_loc[0]+half_len,self.ego_loc[1]-half_len:self.ego_loc[1]+half_len]
+      occ_map = occ_map[self.ego_loc[0]-half_len:self.ego_loc[0]+half_len,self.ego_loc[1]-half_len:self.ego_loc[1]+half_len]
+    
+    occ_map = (occ_map*255).astype(np.uint8)
       
 
     bridge = CvBridge()
     imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90(pub_map, 1)), encoding="bgr8")
+    imgMsg_occ = bridge.cv2_to_imgmsg(np.fliplr(np.rot90(occ_map, 1)), encoding="mono8")
     self.scan_pub.publish(imgMsg)
-
+    self.occp_pub.publish(imgMsg_occ)
 
   def get_range_data(self):
     while not self.gScanInit:
@@ -178,12 +191,22 @@ class scan_proc():
 
   def get_scan_pts(self, rqt):
     points = self.raw_points.copy()
-    #print(points[1:3])
+    threshold_dist = 0.6
+
+    px_list = []
+    py_list = []
+    for p in points:
+      if abs(p[0])<threshold_dist and abs(p[1])<threshold_dist:
+        px_list.append(p[0])
+        py_list.append(p[1])
+        
     points_x = points[:,0]
     points_y = points[:,1]
     #print(points_x[1:3], points_y[1:3])
 
-    return GetScanPointResponse(points_x.tolist(), points_y.tolist())
+    #return GetScanPointResponse(points_x.tolist(), points_y.tolist())
+    return GetScanPointResponse(px_list, py_list)
+
 
 
   def next_state_collision_est(self, safe_dist, direction):
@@ -220,7 +243,8 @@ class scan_proc():
 
 
   def gen_local_map(self):
-    while not self.gScanInit:gXcoord
+    while not self.gScanInit:
+      pass
     
     #Image Axis
     # o---------->x
@@ -276,10 +300,12 @@ class scan_proc():
     cv.drawContours(self.scan_map, [points],0,(191,191,191),-1)
     cv.drawContours(self.scan_map, [points],0,(255,0,0),1)
     self.free_space = self.scan_map[:,:,1].copy()
+    self.free_space = self.free_space.astype(np.float)
     non_occupied = self.free_space>0
     occupied = self.free_space==0
     self.free_space[non_occupied] = 0
-    self.free_space[occupied] = 1
+    self.free_space[occupied] = 0.5
+    self.free_space[points[:,1], points[:,0]] = 1
     """
     plt.imshow(self.free_space)
     plt.show()
@@ -315,7 +341,7 @@ class scan_proc():
     #plt.imshow(np.fliplr(np.rot90(scan_map, 1)))
 
     if self.circum_check:
-      self.check_space_occupancy(eCenter, self.free_space)
+      self.check_overlap_dir(eCenter, self.free_space, dbg=False)
 
     rate = rospy.Rate(1e6)
     rate.sleep()
@@ -398,8 +424,13 @@ class scan_proc():
     
     if overlap_sum>0:
       if dbg: print("Obstacles Around: %d" % overlap_sum)
+      self.coll_flag = 1
+    else:
+      self.coll_flag = 0
     
-    
+    if self.circum_check:
+      self.coll_flag_pub.publish(self.coll_flag)
+
     if arr_ret:
       return overlap_sum, overlap_arr.copy()
     else:
@@ -423,11 +454,15 @@ class scan_proc():
 
     ego_mask_center = (self.ego_space.shape[0]>>1, self.ego_space.shape[0]>>1)
     direction = world_get_dir(ego_mask_center, (cX,cY))
+    self.coll_dirc = direction
 
     if dbg: 
       print("Ego Mask Center: ", ego_mask_center)
       print("Overlap Center: ", cX, ',', cY)
       print("Overlap Direction: ", direction)
+
+    if self.circum_check:
+      self.coll_dirc_pub.publish(self.coll_dirc)
 
     return True, direction
 
@@ -574,7 +609,7 @@ def scan_disp_server():
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
   scan_processor = scan_proc(scaleup=50.0, zoom=2, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
-                            pub_scan_map=True, auto_gen_map=True, invert=True, skip_inf=False, print_path=False,
+                            pub_scan_map=True, auto_gen_map=True, invert=False, skip_inf=False, print_path=False,
                             bot_circumference=(0.2, 0.2), circum_check=True)
 
   img_sub = rospy.Subscriber("/scan_diagram", Image, scan_img_callback)

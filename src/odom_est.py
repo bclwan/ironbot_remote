@@ -315,7 +315,10 @@ def odometer():
   # Setup static transformint
 
   # spin() simply keeps python from exiting until this node is stopped
-  
+  tmpORT = 0.0
+  tmpX = 0.0
+  tmpY = 0.0
+
   while not rospy.is_shutdown():
     global glbAX
     global glbAY
@@ -335,10 +338,19 @@ def odometer():
 
     if USE_SCAN:
       bot.updateScanPoint()
+      #print("Scan: ", bot.scan[0:3])
+      print("Point N: ", bot.scan.shape[0])
 
       if bot.scan_stat >= 2:
-        T_hist, pts = icp(bot.scan_prev, bot.scan, distance_threshold=0.05, verbose=True)
-        print(len(T_hist))
+        R_hist, X_hist, Y_hist, pts = icp(bot.scan_prev, bot.scan, distance_threshold=0.1, verbose=False)
+
+        tmpORT = theta_rot(tmpORT, sum(R_hist))
+        tmpX += sum(X_hist)
+        tmpY += sum(Y_hist)
+
+        print("Est Coord: (", tmpX, tmpY, ")")
+        print("Est Orien: ", tmpORT)
+        #print(tmpORT)
         print
 
         #a = raw_input()

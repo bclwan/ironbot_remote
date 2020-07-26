@@ -95,6 +95,15 @@ def world_dir_diff(a0, a1):
   return diff
 
 
+def world_dir_chg(a0, a1):
+  diff = abs(a0-a1)
+  dirc = 1 if a0 > a1 else -1
+  if diff>np.pi:
+    diff = 2*np.pi - diff
+    dirc *= -1
+
+  return dirc*diff
+
 
 def manhattan_dist(p0, p1):
   return abs(p0[0]-p1[0]) + abs(p0[1]-p1[1])
