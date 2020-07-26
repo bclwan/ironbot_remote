@@ -57,6 +57,7 @@ find_package(catkin REQUIRED COMPONENTS
  add_service_files(
    FILES
    RstLocalOdom.srv
+   RstMapping.srv
    GetScanPoint.srv
  )
 

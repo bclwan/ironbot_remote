@@ -6,6 +6,8 @@ from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan, Image
 from cv_bridge import CvBridge
 
+from ironbot_rmt_ctrl.srv import RstMapping, RstMappingResponse
+
 import numpy as np
 from scipy.ndimage import rotate
 
@@ -33,12 +35,24 @@ class map_creator():
 
     self.odom = odom_listener()
     self.scan_map_sub = rospy.Subscriber("/free_space", Image, self.occp_img_callback)
+    self.rstMapping_service = rospy.Service('rst_mapping', RstMapping, self.map_reset)
 
     self.ego_ort = 0.0
     self.ego_pos = (0.0, 0.0)
     self.ego_map_loc = (0,0)
     self.ego_map_org = (0.0, 0.0)
 
+
+  def map_reset(self, rst):
+    self.glb_map = None
+    self.glb_map_size = (0,0)
+    self.ego_ort = 0.0
+    self.ego_pos = (0.0, 0.0)
+    self.ego_map_loc = (0,0)
+    self.ego_map_org = (0.0, 0.0)
+    self.map_init = False
+    print("Reset Mapping")
+    return RstMappingResponse(0)
 
 
   def occp_img_callback(self, imgMsg):
@@ -189,7 +203,7 @@ def mapping():
   while not map_tool.map_init:
     rate.sleep()
 
-  while not rospy.is_shutdown():
+  while not rospy.is_shutdown() and map_tool.map_init:
     imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90((map_tool.glb_map*255).astype(np.uint8), 1)), encoding="mono8")
     map_pub.publish(imgMsg)
     rate.sleep()

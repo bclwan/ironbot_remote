@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from lib import wrappers
+import wrapper
 from lib import dqn_model
 
 import argparse
