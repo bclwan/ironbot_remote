@@ -4,7 +4,7 @@ import rospy
 import tf
 import tf2_ros
 from std_msgs.msg import Float32, String
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, Image
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose, Point, Quaternion, Twist, Vector3, TransformStamped
 from tf.transformations import euler_from_quaternion
@@ -47,6 +47,47 @@ def get_next_pos(direction, distance):
 
 
 
+
+class LocalMapRecv():
+  def __init__(self, scan_topic="/free_space", timeout=5):
+    self.scan_topic = scan_topic
+    self.timeout = timeout
+
+    self.scan_map = np.zeros(0)
+    self.scan_map_valid = False
+    #self.scan_map_sub = rospy.Subscriber(scan_topic, Image, self.occp_img_callback)
+
+
+  def recv_occp_msg(self):
+    try:
+      self.scan_map_valid = False
+      imgMsg = rospy.wait_for_message(self.scan_topic, Image, timeout=self.timeout)
+      bArray = bytearray(imgMsg.data)
+      scan_img = np.array(bArray).reshape(imgMsg.height, imgMsg.width)
+      self.scan_map = np.rot90(np.fliplr(scan_img), -1)
+      self.scan_map_valid = True
+      return 0
+    except rospy.ROSException:
+      print("No map received")
+      return -1
+
+
+  def get_occp_map(self):
+    return self.scan_map.copy()
+
+  """
+  #sub_once = rospy.Subscriber(self.scan_topic, Image, self.occp_img_callback, sub_once)
+  def occp_img_callback(self, imgMsg, sub):
+    bArray = bytearray(imgMsg.data)
+    scan_img = np.array(bArray).reshape(imgMsg.height, imgMsg.width)
+    self.scan_map = np.rot90(np.fliplr(scan_img), -1)
+    sub.unregister()
+  """
+
+
+
+
+
 def main():
   #Pre-set
   SIM = False
@@ -76,7 +117,7 @@ def main():
     scanInvert = False
 
   scan_processor = scan_proc(get_ort=tf_get_ort_e, get_pos=tf_get_pos, 
-                            scaleup=scanMapScale, pub_scan_map=True, auto_gen_map=True, skip_inf=False,
+                            scaleup=scanMapScale, pub_scan_map=False, auto_gen_map=True, skip_inf=False,
                             invert=scanInvert, bot_circumference=(0.25, 0.25), print_path=True)
   
   while not scan_processor.gScanInit:
@@ -135,7 +176,7 @@ def main():
         path = scan_processor.local_path_AStar_search(rand_goal[0], dbg=False)
 
       print("GO Next: ", rand_goal)  
-      #print("Path: ", path)
+      print("Path: ", path)
       world_pos = tf_get_pos()
       trans = (world_pos[0]-scan_processor.ego_loc[0]/scanMapScale, world_pos[1]-scan_processor.ego_loc[1]/scanMapScale)
       path_in_world = world_2d_tf(trans, -tf_get_ort_e()[2], np.array(path)/scanMapScale)
