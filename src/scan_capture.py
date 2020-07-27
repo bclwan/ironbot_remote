@@ -608,7 +608,7 @@ def scan_disp_server():
   print("Subscribe TF")
   #scan_sub = rospy.Subscriber("/scan", LaserScan, scan_callback)
 
-  scan_processor = scan_proc(scaleup=50.0, zoom=2, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
+  scan_processor = scan_proc(scaleup=21.0, zoom=2, get_pos=tf_get_pos, get_ort=tf_get_ort_e, 
                             pub_scan_map=True, auto_gen_map=True, invert=False, skip_inf=False, print_path=False,
                             bot_circumference=(0.2, 0.2), circum_check=True)
 

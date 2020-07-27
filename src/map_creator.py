@@ -62,7 +62,9 @@ class map_creator():
 
 
   def map_area(self, get):
-    return GetMapAreaResponse(self.glb_map_size[0]*self.glb_map_size[1])
+    val = self.glb_map_size[0]*self.glb_map_size[1]
+    print("Map Area: ", val)
+    return GetMapAreaResponse(val)
 
 
   def occp_img_callback(self, imgMsg):
@@ -205,7 +207,7 @@ class map_creator():
 def mapping():
   rospy.init_node('mapping')
 
-  map_tool = map_creator()
+  map_tool = map_creator(scaleup=21.0)
 
   map_pub = rospy.Publisher("/global_map", Image, queue_size=1)
   bridge = CvBridge()
@@ -214,9 +216,10 @@ def mapping():
   while not map_tool.map_init:
     rate.sleep()
 
-  while not rospy.is_shutdown() and map_tool.map_init:
-    imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90((map_tool.glb_map*255).astype(np.uint8), 1)), encoding="mono8")
-    map_pub.publish(imgMsg)
+  while not rospy.is_shutdown():
+    if map_tool.map_init:
+      imgMsg = bridge.cv2_to_imgmsg(np.fliplr(np.rot90((map_tool.glb_map*255).astype(np.uint8), 1)), encoding="mono8")
+      map_pub.publish(imgMsg)
     rate.sleep()
 
 

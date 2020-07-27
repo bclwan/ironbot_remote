@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import wrapper
-from lib import dqn_model
+import dqn_model
 
 import argparse
 import time
@@ -25,7 +25,7 @@ SYNC_TARGET_FRAMES = 1000
 REPLAY_START_SIZE = 10000
 
 EPSILON_DECAY_LAST_FRAME = 10**5
-EPSILON_START = 1.0
+EPSILON_START = 0.99
 EPSILON_FINAL = 0.02
 
 
@@ -65,11 +65,19 @@ class Agent:
         if np.random.random() < epsilon:
             action = env.action_space.sample()
         else:
-            state_a = np.array([self.state], copy=False)
-            state_v = torch.tensor(state_a).to(device)
-            q_vals_v = net(state_v)
-            _, act_v = torch.max(q_vals_v, dim=1)
-            action = int(act_v.item())
+            try:
+                print("Exploitation")
+                state_a = np.array([self.state], copy=False)
+                state_v = torch.tensor(state_a).to(device)
+                state_v = state_v.unsqueeze(0)
+                q_vals_v = net(state_v.float())
+                _, act_v = torch.max(q_vals_v, dim=1)
+                action = int(act_v.item())
+            except Exception as inst:
+                print(type(inst))
+                print(inst.args)
+                print(inst)
+                print(state_v.shape)
 
         # do step in the environment
         new_state, reward, is_done, _ = self.env.step(action)
@@ -112,12 +120,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
     device = torch.device("cuda" if args.cuda else "cpu")
 
-    env = wrappers.make_env(args.env)
+    env = wrapper.make_env(args.env)
 
     net = dqn_model.DQN(env.observation_space.shape, env.action_space.n).to(device)
     tgt_net = dqn_model.DQN(env.observation_space.shape, env.action_space.n).to(device)
     writer = SummaryWriter(comment="-" + args.env)
     print(net)
+
+    #Try Network in/out
+    print("Test Network In/Out")
+    sample = np.ones(env.observation_space.shape, dtype=np.float)/255
+    sample_ts = torch.tensor(sample).to(device)
+    sample_ts = sample_ts.unsqueeze(0)
+    print("In: ", sample_ts.shape)
+    example_out = net(sample_ts.float())
+    print("Out: ", example_out.shape)
+
 
     buffer = ExperienceBuffer(REPLAY_SIZE)
     agent = Agent(env, buffer)
@@ -145,6 +163,10 @@ if __name__ == "__main__":
                 frame_idx, len(total_rewards), mean_reward, epsilon,
                 speed
             ))
+            
+            torch.save(net.state_dict(), "training_backup.dat")
+            print("Saved training backup")
+
             writer.add_scalar("epsilon", epsilon, frame_idx)
             writer.add_scalar("speed", speed, frame_idx)
             writer.add_scalar("reward_100", mean_reward, frame_idx)
