@@ -127,6 +127,11 @@ if __name__ == "__main__":
     writer = SummaryWriter(comment="-" + args.env)
     print(net)
 
+    tgt_net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat"))
+    net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat"))
+
+    #torch.save(net.state_dict(), "/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat")
+
     #Try Network in/out
     print("Test Network In/Out")
     sample = np.ones(env.observation_space.shape, dtype=np.float)/255
@@ -164,7 +169,7 @@ if __name__ == "__main__":
                 speed
             ))
             
-            torch.save(net.state_dict(), "training_backup.dat")
+            torch.save(net.state_dict(), "/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat")
             print("Saved training backup")
 
             writer.add_scalar("epsilon", epsilon, frame_idx)

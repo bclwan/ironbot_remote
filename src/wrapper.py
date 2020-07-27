@@ -131,11 +131,14 @@ class RobotSimEnv():
 
 
 
-  def gen_reward(self):
+  def gen_reward(self, act):
     reward = 0
     self.map_size_prev = self.map_size
     self.map_size = int(self.service_get_map_area(0).area)
     if self.map_size>self.map_size_prev:
+      reward += 2
+
+    if act[0]>0:
       reward += 1
 
     if self.coll_flag:
@@ -172,7 +175,7 @@ class RobotSimEnv():
     self.cmd_publisher.publish(self.clear_cmd)
 
     #self.observation_space.updateScanPoint()
-    reward = self.gen_reward()
+    reward = self.gen_reward(act)
 
     t = time.time()
 
@@ -185,6 +188,9 @@ class RobotSimEnv():
         print("<<Episode End>>")
 
     state = self.observation_space.scan_img.copy()
+    while state.shape[0] != 84 or state.shape[1] != 84:
+      state = self.observation_space.scan_img.copy()
+      
     state = state.reshape(84,84).astype(np.float)/255
     #print("State shape: ", state.shape)
     
