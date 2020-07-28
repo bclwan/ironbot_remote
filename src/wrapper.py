@@ -12,6 +12,8 @@ import time
 
 import numpy as np
 
+STATE_W = 84
+STATE_H = 84
 
 class RobotSimAct():
   def __init__(self):
@@ -19,15 +21,17 @@ class RobotSimAct():
     self.action_list = []
 
     self.action_list.append((0,0))
-    self.action_list.append((self.max_speed, 0.2))
-    self.action_list.append((self.max_speed, 0.4))
     self.action_list.append((self.max_speed, 0.6))
+    self.action_list.append((self.max_speed, 0.4))
+    self.action_list.append((self.max_speed, 0.2))
+    self.action_list.append((self.max_speed, 0.0))
     self.action_list.append((self.max_speed, -0.2))
     self.action_list.append((self.max_speed, -0.4))
     self.action_list.append((self.max_speed, -0.6))
-    self.action_list.append((-self.max_speed, 0.2))
-    self.action_list.append((-self.max_speed, 0.4))
     self.action_list.append((-self.max_speed, 0.6))
+    self.action_list.append((-self.max_speed, 0.4))
+    self.action_list.append((-self.max_speed, 0.2))
+    self.action_list.append((-self.max_speed, 0.0))
     self.action_list.append((-self.max_speed, -0.2))
     self.action_list.append((-self.max_speed, -0.4))
     self.action_list.append((-self.max_speed, -0.6))
@@ -58,7 +62,7 @@ class RobotSimObv():
     self.scan_prev = np.zeros(0)
     self.scan_stat = 0
 
-    self.scan_img = np.zeros(0)
+    self.scan_img = np.zeros((STATE_W, STATE_H), dtype=np.float)
     self.scan_img_init = False
 
     #init scan data
@@ -139,7 +143,7 @@ class RobotSimEnv():
       reward += 2
 
     if act[0]>0:
-      reward += 1
+      reward += 5
 
     if self.coll_flag:
       reward -= 10
@@ -159,7 +163,7 @@ class RobotSimEnv():
     self.observation_space.updateScanPoint()
     self.coll_flag = 0
     self.coll_cnt = 0
-    return self.observation_space.scan
+    return self.observation_space.scan_img.copy()
 
 
   def step(self, action):
@@ -190,9 +194,10 @@ class RobotSimEnv():
     state = self.observation_space.scan_img.copy()
     while state.shape[0] != 84 or state.shape[1] != 84:
       state = self.observation_space.scan_img.copy()
-      
+
     state = state.reshape(84,84).astype(np.float)/255
     #print("State shape: ", state.shape)
+    #print(state[0:10, 0:10])
     
     return state, reward, is_done, 0
 
