@@ -4,6 +4,9 @@ from tf.transformations import euler_from_quaternion
 from tf2_msgs.msg import TFMessage
 from nav_msgs.msg import Odometry
 
+from ironbot_rmt_ctrl.srv import RstLocalOdom
+
+
 global robot_tf
 robot_tf = None
 
@@ -87,6 +90,44 @@ class odom_listener():
     if self.transform is not None:
       self.ort_q = (self.transform.rotation.x, self.transform.rotation.y, 
                     self.transform.rotation.z, self.transform.rotation.w)
+      self.ort = euler_from_quaternion(self.ort_q)
+
+
+  def get_pos(self):
+    return (self.pos[0], self.pos[1])
+
+  
+  def get_ort(self):
+    return self.ort
+
+
+
+
+class local_odom_listener():
+  def __init__(self, topic='/local_odom'):
+    self.service_rst_local_odom = rospy.ServiceProxy('rst_local_odom', RstLocalOdom)
+    self.tf_sub = rospy.Subscriber(topic, Odometry, self.local_pose_callback)
+    self.pose = Odometry().pose.pose
+    self.pos = (0.0, 0,0)
+    self.ort = 0.0
+    self.ort_q = (0.0, 0.0, 0.0, 0.0)
+
+
+  def local_pose_callback(self, msg):
+    self.pose = msg.pose.pose
+    self.upd_pos()
+    self.upd_ort()
+
+
+  def upd_pos(self):
+    if self.pose is not None:
+      self.pos = (self.pose.position.x, self.pose.position.y)
+
+
+  def upd_ort(self):
+    if self.pose is not None:
+      self.ort_q = (self.pose.orientation.x, self.pose.orientation.y, 
+                    self.pose.orientation.z, self.pose.orientation.w)
       self.ort = euler_from_quaternion(self.ort_q)
 
 
