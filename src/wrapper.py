@@ -116,6 +116,7 @@ class RobotSimEnv():
 
     self.coll_flag = 0
     self.coll_cnt = 0
+    self.coll_cnt_sum = 0
 
     self.cmd_publisher = rospy.Publisher('cmd_vel', Twist, queue_size=1)
     self.coll_flag_sub = rospy.Subscriber('coll_flag', Int8, self.check_coll)
@@ -132,6 +133,7 @@ class RobotSimEnv():
     self.coll_flag = msg.data
     if self.coll_flag:
       self.coll_cnt += 1
+      self.coll_cnt_sum += 1
 
 
 
@@ -140,10 +142,13 @@ class RobotSimEnv():
     self.map_size_prev = self.map_size
     self.map_size = int(self.service_get_map_area(0).area)
     if self.map_size>self.map_size_prev:
-      reward += 2
+      reward += 5
 
     if act[0]>0:
-      reward += 5
+      reward += 2
+
+    if act[0]==0:
+      reward -= 1
 
     if self.coll_flag:
       reward -= 10
@@ -163,6 +168,7 @@ class RobotSimEnv():
     self.observation_space.updateScanPoint()
     self.coll_flag = 0
     self.coll_cnt = 0
+    self.coll_cnt_sum = 0
     return self.observation_space.scan_img.copy()
 
 

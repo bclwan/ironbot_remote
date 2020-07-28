@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 
 DEFAULT_ENV_NAME = "PongNoFrameskip-v4"
-MEAN_REWARD_BOUND = 19.5
+MEAN_REWARD_BOUND = 150
 
 GAMMA = 0.99
 BATCH_SIZE = 32
@@ -28,7 +28,7 @@ SYNC_TARGET_FRAMES = 1000
 REPLAY_START_SIZE = 600
 
 EPSILON_DECAY_LAST_FRAME = 10**5
-EPSILON_START = 0.99
+EPSILON_START = 0.70
 EPSILON_FINAL = 0.02
 
 STATE_W = 84
@@ -151,12 +151,11 @@ if __name__ == "__main__":
     writer = SummaryWriter(comment="-" + args.env)
     print(net)
 
-    tgt_net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat"))
-    net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat"))
-
-    #torch.save(net.state_dict(), "/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat")
+    tgt_net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/dqn_self_driving.dat"))
+    net.load_state_dict(torch.load("/home/bwan/Projects/ROSWS/src/ironbot_remote/src/dqn_self_driving.dat"))
 
     #Try Network in/out
+    """
     print("Test Network In/Out")
     sample = np.ones(env.observation_space.shape, dtype=np.float)/255
     sample_ts = torch.tensor(sample).to(device)
@@ -164,7 +163,7 @@ if __name__ == "__main__":
     print("In: ", sample_ts.shape)
     example_out = net(sample_ts.float())
     print("Out: ", example_out.shape)
-
+    """
 
     buffer = ExperienceBuffer(REPLAY_SIZE)
     agent = Agent(env, buffer)
@@ -176,51 +175,62 @@ if __name__ == "__main__":
     ts_frame = 0
     ts = time.time()
     best_mean_reward = None
+    test_mode = False
 
-    while True:
-        frame_idx += 1
-        epsilon = max(EPSILON_FINAL, EPSILON_START - frame_idx / EPSILON_DECAY_LAST_FRAME)
-
-        reward = agent.play_step(net, epsilon, device=device)
-        if reward is not None:
-            total_rewards.append(reward)
-            speed = (frame_idx - ts_frame) / (time.time() - ts)
-            ts_frame = frame_idx
-            ts = time.time()
-            mean_reward = np.mean(total_rewards[-100:])
-            print("%d: done %d games, mean reward %.3f, eps %.2f, speed %.2f f/s" % (
-                frame_idx, len(total_rewards), mean_reward, epsilon,
-                speed
-            ))
-            
-            torch.save(net.state_dict(), "/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat")
-            print("Saved training backup")
-
-            writer.add_scalar("epsilon", epsilon, frame_idx)
-            writer.add_scalar("speed", speed, frame_idx)
-            writer.add_scalar("reward_100", mean_reward, frame_idx)
-            writer.add_scalar("reward", reward, frame_idx)
-            if best_mean_reward is None or best_mean_reward < mean_reward:
-                torch.save(net.state_dict(), args.env + "-best.dat")
-                if best_mean_reward is not None:
-                    print("Best mean reward updated %.3f -> %.3f, model saved" % (best_mean_reward, mean_reward))
-                best_mean_reward = mean_reward
-            if mean_reward > args.reward:
-                print("Solved in %d frames!" % frame_idx)
+    if test_mode:
+        while True:
+            reward = agent.play_step(net, 0, device=device)
+            if reward is not None:
+                print("Played one game")
+                print("Total Reward: ", reward)
+                print("Collision Flag: ", env.coll_cnt_sum)
                 break
+            
+    else:
+        while True:
+            frame_idx += 1
+            epsilon = max(EPSILON_FINAL, EPSILON_START - frame_idx / EPSILON_DECAY_LAST_FRAME)
 
-        if len(buffer) < REPLAY_START_SIZE:
-            continue
+            reward = agent.play_step(net, epsilon, device=device)
+            if reward is not None:
+                total_rewards.append(reward)
+                speed = (frame_idx - ts_frame) / (time.time() - ts)
+                ts_frame = frame_idx
+                ts = time.time()
+                mean_reward = np.mean(total_rewards[-100:])
+                print("%d: done %d games, mean reward %.3f, eps %.2f, speed %.2f f/s" % (
+                    frame_idx, len(total_rewards), mean_reward, epsilon,
+                    speed
+                ))
+                
+                torch.save(net.state_dict(), "/home/bwan/Projects/ROSWS/src/ironbot_remote/src/model/training_backup.dat")
+                print("Saved training backup")
 
-        if frame_idx % SYNC_TARGET_FRAMES == 0:
-            print("Target Network update")
-            tgt_net.load_state_dict(net.state_dict())
+                writer.add_scalar("epsilon", epsilon, frame_idx)
+                writer.add_scalar("speed", speed, frame_idx)
+                writer.add_scalar("reward_100", mean_reward, frame_idx)
+                writer.add_scalar("reward", reward, frame_idx)
+                if best_mean_reward is None or best_mean_reward < mean_reward:
+                    torch.save(net.state_dict(), args.env + "-best.dat")
+                    if best_mean_reward is not None:
+                        print("Best mean reward updated %.3f -> %.3f, model saved" % (best_mean_reward, mean_reward))
+                    best_mean_reward = mean_reward
+                if mean_reward > args.reward:
+                    print("Solved in %d frames!" % frame_idx)
+                    break
 
-        optimizer.zero_grad()
-        batch = buffer.sample(BATCH_SIZE)
-        loss_t = calc_loss(batch, net, tgt_net, device=device)
-        loss_t.backward()
-        print(loss_t)
+            if len(buffer) < REPLAY_START_SIZE:
+                continue
 
-        optimizer.step()
-    writer.close()
+            if frame_idx % SYNC_TARGET_FRAMES == 0:
+                print("Target Network update")
+                tgt_net.load_state_dict(net.state_dict())
+
+            optimizer.zero_grad()
+            batch = buffer.sample(BATCH_SIZE)
+            loss_t = calc_loss(batch, net, tgt_net, device=device)
+            loss_t.backward()
+            print(loss_t)
+
+            optimizer.step()
+        writer.close()
